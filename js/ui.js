@@ -70,6 +70,7 @@
 
     const ghost = $("drag-ghost");
     let dragState = null;
+    let blockedDoneDrag = false;
 
     document.addEventListener("pointerdown", (e) => {
       const tokenEl = e.target.closest("[data-drag-source]");
@@ -90,8 +91,8 @@
       }
 
       if (tokenEl.classList.contains("token-done")) {
+        blockedDoneDrag = true;
         suppressNextBoardClick = true;
-        setTimeout(() => { suppressNextBoardClick = false; }, 120);
         EcoGame.sound.playWarn();
         showToast("🚫 Esta ficha ya completó su ración de esta ronda. ¡Debes mover otra ficha!");
         return;
@@ -132,6 +133,12 @@
     });
 
     const endDrag = (e) => {
+      if (blockedDoneDrag) {
+        blockedDoneDrag = false;
+        suppressNextBoardClick = true;
+        setTimeout(() => { suppressNextBoardClick = false; }, 80);
+        return;
+      }
       if (!dragState) return;
       const current = dragState;
       dragState = null;
