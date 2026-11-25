@@ -126,13 +126,13 @@
             <label>
               ¿Qué ficha quieres manejar? (el resto serán Bots)
               <select id="local-role">
-                <option value="lynx">🐆 Lince ibérico</option>
-                <option value="rabbits">🐇 Conejos</option>
-                <option value="insects">🐞 Insectos</option>
-                <option value="plants">🌱 Plantas</option>
-                <option value="nutrients">🪱 Nutrientes (Suelo)</option>
-                <option value="remains">🦴 Restos orgánicos</option>
-                <option value="all">🎓 Controlar todas (Modo Pizarra)</option>
+                <option value="all">🖐️ Mover todas las fichas (Tablero físico)</option>
+                <option value="lynx">🐆 Lince ibérico (+ 5 Bots)</option>
+                <option value="rabbits">🐇 Conejos (+ 5 Bots)</option>
+                <option value="insects">🐞 Insectos (+ 5 Bots)</option>
+                <option value="plants">🌱 Plantas (+ 5 Bots)</option>
+                <option value="nutrients">🪱 Nutrientes (+ 5 Bots)</option>
+                <option value="remains">🦴 Restos orgánicos (+ 5 Bots)</option>
               </select>
             </label>
             <label>
@@ -303,11 +303,20 @@
             </div>
           </div>
 
+          <!-- Bandeja física de mano / piezas pendientes de colocar -->
+          <div id="table-tray" class="table-tray hidden">
+            <div class="tray-header">
+              <strong id="tray-title">🖐️ Piezas en espera</strong>
+              <span id="tray-hint" class="small muted"></span>
+            </div>
+            <div id="tray-tokens" class="tray-tokens"></div>
+          </div>
+
           <!-- Caja Reserva de la Naturaleza -->
-          <div class="reserve-box">
+          <div class="reserve-box" id="reserve-box" data-zone="reserve">
             <div class="reserve-title">
               <span>📦 Caja "Reserva de la Naturaleza"</span>
-              <small id="reserve-mode-label">Fichas de repuesto e intercambio</small>
+              <small id="reserve-mode-label">Arrastra fichas aquí o sácalas de la caja</small>
             </div>
             <div id="reserve-items" class="reserve-items"></div>
           </div>
@@ -453,5 +462,8 @@
 
   <!-- Notificaciones Toast -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- Ficha flotante durante arrastre físico -->
+  <div id="drag-ghost" class="drag-ghost hidden" aria-hidden="true"></div>
 </body>
 </html>
