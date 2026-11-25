@@ -36,6 +36,7 @@
         onStatus: () => {},
         onError: () => {},
         onMoveError: () => {},
+        onFloater: () => {},
         onClosed: () => {},
       };
     }
@@ -223,6 +224,8 @@
             this.handlers.onState(this.state);
           } else if (msg.type === "MOVE_ERROR") {
             this.handlers.onMoveError(msg.error, msg.targetZone);
+          } else if (msg.type === "MOVE_FLOATER") {
+            this.handlers.onFloater(msg.text);
           } else if (msg.type === "HOST_CLOSED") {
             this.cleanup();
             this.handlers.onClosed("El anfitrión ha cerrado la sala.");
@@ -370,8 +373,9 @@
 
       const neededRole = EcoGame.engine.getActivePhaseRole(phase);
       if (!neededRole) {
-        // Fases generales (carta, predicción, fin de ronda): anfitrión o cualquier humano
-        return player.isHost || phase === "predict";
+        // Fases generales (carta, predicción, fin de ronda): cualquier jugador humano en modo cooperativo/anfitrión
+        if (phase === "card" || phase === "predict") return true;
+        return player.isHost;
       }
       return player.role === neededRole;
     }
@@ -419,13 +423,22 @@
           const res = eng.performMove(
             this.state,
             payload.targetZone,
-            payload.mode || "one"
+            payload.mode || "one",
+            payload.sourceZone || null
           );
           if (res.error) {
             this.sendMoveErrorTo(senderId, res.error, payload.targetZone);
             return;
           }
           this.state = res.state;
+          if (res.floater) {
+            if (senderId === this.myId) {
+              this.handlers.onFloater(res.floater);
+            } else {
+              const c = this.clients.get(senderId);
+              if (c && c.open) c.send({ type: "MOVE_FLOATER", text: res.floater });
+            }
+          }
           break;
         }
         case "PASS_TURN":

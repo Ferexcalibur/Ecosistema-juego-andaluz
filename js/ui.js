@@ -22,83 +22,174 @@
     }, 3400);
   }
 
+  function spawnFloater(x, y, text) {
+    if (!text) return;
+    const el = document.createElement("div");
+    el.className = "board-floater";
+    el.textContent = text;
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 950);
+  }
+
   function showScreen(screenId) {
     document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
     $(screenId).classList.add("active");
+    if (screenId !== "screen-game") {
+      $("modal-card").classList.add("hidden");
+    }
   }
 
   let lastSeenChatCount = 0;
   let lastPendingCardKey = null;
-  let boardListenersBound = false;
+  let dragInitialized = false;
+  let lastPointerPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
-  const VALID_TARGETS = {
-    turn_rabbits: "plants",
-    turn_lynx: "rabbits",
-    turn_remains: "remains",
-    turn_insects: "remains",
-    turn_nutrients: "plants",
-    turn_plants: "plants",
-  };
-
-  function bindBoardInteractions() {
-    if (boardListenersBound) return;
-    boardListenersBound = true;
-
-    const getZoneKeyFromEl = (el) => {
+  function getZoneKeyAtPoint(x, y) {
+    const els = document.elementsFromPoint(x, y);
+    for (const el of els) {
+      if (el.id === "drag-ghost") continue;
       const sub = el.closest(".center-subzone");
-      if (sub && sub.dataset.role) return sub.dataset.role;
+      if (sub && sub.dataset.role) return { key: sub.dataset.role, el: sub };
+      const res = el.closest("#reserve-box");
+      if (res) return { key: "reserve", el: res };
       const z = el.closest(".zone[data-zone]");
-      if (!z) return null;
-      return z.dataset.zone === "center" ? "remains" : z.dataset.zone;
-    };
+      if (z) {
+        const key = z.dataset.zone === "center" ? "remains" : z.dataset.zone;
+        return { key, el: z };
+      }
+    }
+    return null;
+  }
 
-    const board = $("ecosystem-board");
+  function initPhysicalDrag() {
+    if (dragInitialized) return;
+    dragInitialized = true;
 
-    board.addEventListener("click", (e) => {
+    const ghost = $("drag-ghost");
+    let dragState = null;
+
+    document.addEventListener("pointerdown", (e) => {
+      const tokenEl = e.target.closest("[data-drag-source]");
+      if (!tokenEl) return;
       const state = EcoGame.room.state;
       if (!state || state.status !== "playing") return;
-      const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
-      if (!activeRole) return;
+
       if (!EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase)) {
         const owner = EcoGame.engine.getTurnOwner(state);
         if (owner) {
           showToast(
             owner.isBot
               ? `🤖 Turno automático de ${owner.name}...`
-              : `⏳ Es el turno de ${owner.name}. Solo él/ella mueve sus fichas.`
+              : `⏳ Turno de ${owner.name}. Solo él/ella mueve sus fichas.`
           );
         }
         return;
       }
 
-      const targetZone = getZoneKeyFromEl(e.target);
-      if (!targetZone) return;
-      EcoGame.sound.playPop();
-      EcoGame.room.dispatchGameAction("PERFORM_MOVE", { targetZone, mode: "one" });
-    });
-
-    // Drag-and-drop también disponible además de clic directo
-    board.addEventListener("dragstart", (e) => {
-      const chip = e.target.closest(".token-chip[data-role]");
-      if (!chip) return;
-      e.dataTransfer.setData("text/plain", chip.dataset.role);
-    });
-
-    board.addEventListener("dragover", (e) => {
-      const state = EcoGame.room.state;
-      if (!state || !EcoGame.engine.getActivePhaseRole(state.phase)) return;
       e.preventDefault();
+      lastPointerPos = { x: e.clientX, y: e.clientY };
+      dragState = {
+        sourceKey: tokenEl.dataset.dragSource,
+        emoji: tokenEl.dataset.dragEmoji || tokenEl.textContent.trim().slice(0, 2),
+        chipClass: tokenEl.dataset.chipClass || "token-plants",
+        originEl: tokenEl,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+      };
     });
 
-    board.addEventListener("drop", (e) => {
-      e.preventDefault();
+    document.addEventListener("pointermove", (e) => {
+      if (!dragState) return;
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
+      if (!dragState.moved && Math.hypot(dx, dy) >= 6) {
+        dragState.moved = true;
+        dragState.originEl.classList.add("token-being-dragged");
+        ghost.className = `drag-ghost ${dragState.chipClass}`;
+        ghost.textContent = dragState.emoji;
+        ghost.classList.remove("hidden");
+      }
+      if (dragState.moved) {
+        ghost.style.left = `${e.clientX}px`;
+        ghost.style.top = `${e.clientY}px`;
+        document.querySelectorAll(".drop-hover").forEach((el) => el.classList.remove("drop-hover"));
+        const hit = getZoneKeyAtPoint(e.clientX, e.clientY);
+        if (hit && hit.el) hit.el.classList.add("drop-hover");
+      }
+    });
+
+    const endDrag = (e) => {
+      if (!dragState) return;
+      const current = dragState;
+      dragState = null;
+
+      ghost.classList.add("hidden");
+      current.originEl.classList.remove("token-being-dragged");
+      document.querySelectorAll(".drop-hover").forEach((el) => el.classList.remove("drop-hover"));
+      lastPointerPos = { x: e.clientX, y: e.clientY };
+
       const state = EcoGame.room.state;
       if (!state || state.status !== "playing") return;
+
+      if (current.moved) {
+        const hit = getZoneKeyAtPoint(e.clientX, e.clientY);
+        if (!hit) return;
+        if (hit.key === current.sourceKey && state.phase !== "turn_plants") {
+          showToast("🖐️ Arrastra la ficha hasta su zona o especie objetivo.");
+          return;
+        }
+        EcoGame.sound.playPop();
+        EcoGame.room.dispatchGameAction("PERFORM_MOVE", {
+          sourceZone: current.sourceKey,
+          targetZone: hit.key,
+          mode: "one",
+        });
+      }
+    };
+
+    document.addEventListener("pointerup", endDrag);
+    document.addEventListener("pointercancel", endDrag);
+
+    // También permitir clic directo en ficha objetivo o zona objetivo iluminada
+    $("ecosystem-board").addEventListener("click", (e) => {
+      const state = EcoGame.room.state;
+      if (!state || state.status !== "playing") return;
+      const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
+      if (!activeRole) return;
       if (!EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase)) return;
-      const targetZone = getZoneKeyFromEl(e.target);
-      if (!targetZone) return;
+
+      lastPointerPos = { x: e.clientX, y: e.clientY };
+      const hit = getZoneKeyAtPoint(e.clientX, e.clientY);
+      if (!hit) return;
+      // Si hace clic en su propia zona (y no es turn_plants), invitar a arrastrar hacia la presa/objetivo
+      if (hit.key === activeRole && state.phase !== "turn_plants" && state.phase !== "turn_remains") {
+        showToast("🖐️ ¡Coge tu ficha y arrástrala sobre el objetivo iluminado (o haz clic en el objetivo)!");
+        return;
+      }
       EcoGame.sound.playPop();
-      EcoGame.room.dispatchGameAction("PERFORM_MOVE", { targetZone, mode: "one" });
+      EcoGame.room.dispatchGameAction("PERFORM_MOVE", {
+        sourceZone: activeRole,
+        targetZone: hit.key,
+        mode: "one",
+      });
+    });
+
+    $("reserve-box").addEventListener("click", (e) => {
+      if (e.target.closest("[data-drag-source]")) return;
+      const state = EcoGame.room.state;
+      if (!state || state.status !== "playing") return;
+      const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
+      if (!activeRole || !EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase)) return;
+      lastPointerPos = { x: e.clientX, y: e.clientY };
+      EcoGame.sound.playPop();
+      EcoGame.room.dispatchGameAction("PERFORM_MOVE", {
+        sourceZone: activeRole,
+        targetZone: "reserve",
+        mode: "one",
+      });
     });
   }
 
@@ -107,6 +198,8 @@
     const el =
       zoneKey === "insects" || zoneKey === "remains"
         ? $(`subzone-${zoneKey}`)
+        : zoneKey === "reserve"
+        ? $("reserve-box")
         : document.querySelector(`.zone[data-zone="${zoneKey}"]`);
     if (!el) return;
     el.classList.remove("zone-shake");
@@ -114,16 +207,57 @@
     el.classList.add("zone-shake");
   }
 
-  function renderTokens(containerId, count, cssClass, emoji, roleKey, isMyTurn, emojisPool = null) {
+  function getActiveGuidance(state) {
+    const b = state.board;
+    const m = state.roundMeta;
+    const p = state.phase;
+    if (p === "turn_rabbits") {
+      const canEat = b.plants >= 1 && (m.rabbitBites === 1 || b.plants >= 2);
+      return canEat
+        ? { source: "rabbits", target: "plants", hint: "Arrastra un 🐇 Conejo sobre una 🌱 Planta (o 🌱 Planta a 📦 Reserva)" }
+        : { source: "rabbits", target: "reserve", hint: "No quedan plantas: arrastra los 🐇 Conejos sin comida a 📦 Reserva" };
+    }
+    if (p === "turn_lynx") {
+      const canHunt = b.rabbits >= 1 && (m.lynxBites === 1 || b.rabbits >= 2);
+      return canHunt
+        ? { source: "lynx", target: "rabbits", hint: "Arrastra el 🐆 Lince sobre un 🐇 Conejo para cazar (2 conejos por lince)" }
+        : { source: "lynx", target: "reserve", hint: "No quedan suficientes conejos: arrastra el 🐆 Lince a 📦 Reserva" };
+    }
+    if (p === "turn_remains") {
+      return { source: "tray_remains", target: "remains", hint: "Arrastra las fichas grises 🦴 hasta la zona Restos del centro" };
+    }
+    if (p === "turn_insects") {
+      return { source: "insects", target: "remains", hint: "Arrastra un 🐞 Insecto sobre un 🦴 Resto orgánico del centro para reciclarlo" };
+    }
+    if (p === "turn_nutrients") {
+      if (m.pendingNutrients > 0) {
+        return { source: "tray_nutrients", target: "nutrients", hint: "Recoge los 🪱 Nutrientes nuevos y arrástralos a la Zona Suelo" };
+      }
+      return { source: "nutrients", target: "plants", hint: "Arrastra 🪱 Nutrientes desde Suelo hacia 🌱 Plantas (máx. 1 por insecto vivo)" };
+    }
+    if (p === "turn_plants") {
+      return { source: "tray_plants", target: "plants", hint: "Arrastra las 🌱 Plantas nuevas desde la bandeja a la Zona Plantas" };
+    }
+    return { source: null, target: null, hint: "" };
+  }
+
+  function renderTokens(containerId, count, cssClass, emoji, roleKey, isDraggable, isTargetGlow, emojisPool = null) {
     const el = $(containerId);
     el.innerHTML = "";
     const capped = Math.min(count, 28);
     for (let i = 0; i < capped; i++) {
+      const chipEmoji = emojisPool ? emojisPool[i % emojisPool.length] : emoji;
       const chip = document.createElement("span");
-      chip.className = `token-chip ${cssClass} ${isMyTurn ? "token-draggable" : ""}`;
-      chip.textContent = emojisPool ? emojisPool[i % emojisPool.length] : emoji;
-      chip.dataset.role = roleKey;
-      chip.draggable = isMyTurn;
+      chip.className = `token-chip ${cssClass} ${isDraggable ? "token-draggable" : ""} ${
+        isTargetGlow ? "token-target-glow" : ""
+      }`;
+      chip.textContent = chipEmoji;
+      if (isDraggable) {
+        chip.dataset.dragSource = roleKey;
+        chip.dataset.dragEmoji = chipEmoji;
+        chip.dataset.chipClass = cssClass;
+        chip.title = "Mantén pulsado y arrastra esta ficha";
+      }
       el.appendChild(chip);
     }
     if (count > 28) {
@@ -134,7 +268,72 @@
     }
   }
 
+  function renderTray(state, canAct, guidance) {
+    const tray = $("table-tray");
+    const box = $("tray-tokens");
+    const m = state.roundMeta;
+    box.innerHTML = "";
+
+    let items = 0;
+    let sourceKey = "";
+    let chipClass = "";
+    let emoji = "";
+    let title = "";
+    let hint = "";
+
+    if (state.phase === "turn_remains" && m.pendingRemains > 0) {
+      items = m.pendingRemains;
+      sourceKey = "tray_remains";
+      chipClass = "token-remains";
+      emoji = "🦴";
+      title = `🖐️ Presas cazadas listas para el centro (${items})`;
+      hint = "Arrastra cada ficha gris 🦴 a la zona Restos del círculo central";
+    } else if (state.phase === "turn_nutrients" && m.pendingNutrients > 0) {
+      items = m.pendingNutrients;
+      sourceKey = "tray_nutrients";
+      chipClass = "token-nutrients";
+      emoji = "🪱";
+      title = `🖐️ Nutrientes recién reciclados (${items})`;
+      hint = "Arrastra cada ficha marrón 🪱 a la Zona Suelo";
+    } else if (state.phase === "turn_plants" && m.plantsToSprout > 0) {
+      items = m.plantsToSprout;
+      sourceKey = "tray_plants";
+      chipClass = "token-plants";
+      emoji = "🌱";
+      title = `🖐️ Nuevas plantas listas para brotar (${items})`;
+      hint = "Arrastra cada ficha verde 🌱 a la Zona Plantas";
+    }
+
+    if (items === 0) {
+      tray.classList.add("hidden");
+      return;
+    }
+
+    tray.classList.remove("hidden");
+    $("tray-title").textContent = title;
+    $("tray-hint").textContent = canAct ? hint : "Esperando al encargado de esta ficha...";
+
+    for (let i = 0; i < Math.min(items, 16); i++) {
+      const chip = document.createElement("span");
+      chip.className = `token-chip ${chipClass} ${canAct ? "token-draggable" : ""}`;
+      chip.textContent = emoji;
+      if (canAct) {
+        chip.dataset.dragSource = sourceKey;
+        chip.dataset.dragEmoji = emoji;
+        chip.dataset.chipClass = chipClass;
+      }
+      box.appendChild(chip);
+    }
+    if (items > 16) {
+      const more = document.createElement("span");
+      more.className = "mini-pill pill-yellow";
+      more.textContent = `+${items - 16}`;
+      box.appendChild(more);
+    }
+  }
+
   function renderLobby(state) {
+    $("modal-card").classList.add("hidden");
     showScreen("screen-lobby");
     const eco = EcoGame.ECOSYSTEMS[state.ecosystem] || EcoGame.ECOSYSTEMS.donana;
     $("lobby-eco-badge").textContent = eco.name;
@@ -288,7 +487,7 @@
   }
 
   function renderGame(state) {
-    bindBoardInteractions();
+    initPhysicalDrag();
     showScreen("screen-game");
 
     const eco = EcoGame.ECOSYSTEMS[state.ecosystem] || EcoGame.ECOSYSTEMS.donana;
@@ -298,7 +497,7 @@
     const me = EcoGame.room.getMyPlayer();
     const myRoleObj = me && me.role ? EcoGame.ROLES.find((r) => r.id === me.role) : null;
     $("hud-my-role").textContent = state.controlAll
-      ? "🎓 Modo Pizarra (todas las fichas)"
+      ? "🎓 Modo Tablero Completo (todas las fichas)"
       : myRoleObj
       ? `Tu ficha: ${myRoleObj.emoji} ${myRoleObj.name}`
       : "Observador";
@@ -310,7 +509,7 @@
       $("topbar-room-pill").classList.add("hidden");
     }
 
-    // Stepper de fases
+    // Stepper
     const stepper = $("phase-stepper");
     stepper.innerHTML = "";
     const phaseIdx = EcoGame.PHASES.findIndex((p) => p.id === state.phase);
@@ -337,7 +536,7 @@
       banner.classList.add("hidden");
     }
 
-    // Tablero 5 zonas (con 6 roles diferenciados)
+    // Tablero
     const b = state.board;
     $("count-nutrients").textContent = b.nutrients;
     $("count-plants").textContent = b.plants;
@@ -348,16 +547,69 @@
 
     const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
     const canAct = EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase);
-    const targetZone = VALID_TARGETS[state.phase] || null;
+    const guidance = getActiveGuidance(state);
 
-    renderTokens("tokens-nutrients", b.nutrients, "token-nutrients", "🪱", "nutrients", canAct && activeRole === "nutrients");
-    renderTokens("tokens-plants", b.plants, "token-plants", "🌱", "plants", canAct && activeRole === "plants");
-    renderTokens("tokens-rabbits", b.rabbits, "token-rabbits", "🐇", "rabbits", canAct && activeRole === "rabbits");
-    renderTokens("tokens-lynx", b.lynx, "token-lynx", "🐆", "lynx", canAct && activeRole === "lynx");
-    renderTokens("tokens-insects", b.insects, "token-insects", "🐞", "insects", canAct && activeRole === "insects", EcoGame.SPECIES.insects.emojis);
-    renderTokens("tokens-remains", b.remains, "token-remains", "🦴", "remains", canAct && activeRole === "remains");
+    // Qué fichas puede arrastrar el usuario en esta fase
+    const dragSrc = guidance.source;
+    const targetKey = guidance.target;
 
-    // Resaltado de propietario activo y objetivo válido
+    renderTokens(
+      "tokens-nutrients",
+      b.nutrients,
+      "token-nutrients",
+      "🪱",
+      "nutrients",
+      canAct && dragSrc === "nutrients",
+      canAct && targetKey === "nutrients"
+    );
+    renderTokens(
+      "tokens-plants",
+      b.plants,
+      "token-plants",
+      "🌱",
+      "plants",
+      canAct && (dragSrc === "plants" || (state.phase === "turn_rabbits" && b.plants > 0)),
+      canAct && targetKey === "plants"
+    );
+    renderTokens(
+      "tokens-rabbits",
+      b.rabbits,
+      "token-rabbits",
+      "🐇",
+      "rabbits",
+      canAct && dragSrc === "rabbits",
+      canAct && targetKey === "rabbits"
+    );
+    renderTokens(
+      "tokens-lynx",
+      b.lynx,
+      "token-lynx",
+      "🐆",
+      "lynx",
+      canAct && dragSrc === "lynx",
+      canAct && targetKey === "lynx"
+    );
+    renderTokens(
+      "tokens-insects",
+      b.insects,
+      "token-insects",
+      "🐞",
+      "insects",
+      canAct && dragSrc === "insects",
+      canAct && targetKey === "insects",
+      EcoGame.SPECIES.insects.emojis
+    );
+    renderTokens(
+      "tokens-remains",
+      b.remains,
+      "token-remains",
+      "🦴",
+      "remains",
+      canAct && dragSrc === "remains",
+      canAct && targetKey === "remains"
+    );
+
+    // Resaltado de zonas
     const allZones = ["nutrients", "plants", "rabbits", "lynx", "insects", "remains"];
     allZones.forEach((roleId) => {
       const el =
@@ -366,21 +618,28 @@
           : document.querySelector(`.zone[data-zone="${roleId}"]`);
       if (!el) return;
       el.classList.toggle("zone-owner-turn", activeRole === roleId);
-      el.classList.toggle("zone-valid-target", canAct && targetZone === roleId);
+      el.classList.toggle("zone-valid-target", canAct && targetKey === roleId);
 
       const owner = state.players.find((p) => p.role === roleId);
       const footerEl = $(`owner-${roleId}`);
       if (footerEl) {
-        footerEl.textContent = owner
+        footerEl.textContent = state.controlAll
+          ? "🖐️ Control manual"
+          : owner
           ? `${owner.isBot ? "🤖 " : "👤 "}${owner.name}`
           : "Sin asignar";
       }
     });
 
+    $("reserve-box").classList.toggle("zone-valid-target", canAct && targetKey === "reserve");
+
+    // Bandeja de fichas pendientes
+    renderTray(state, canAct, guidance);
+
     // Reserva
     const res = state.reserve;
     $("reserve-mode-label").textContent =
-      state.variant === "balanced" ? "Variante equilibrio sostenible" : "Caja original del documento";
+      state.variant === "balanced" ? "Variante equilibrio sostenible" : "Arrastra fichas desde o hacia la caja";
     $("reserve-items").innerHTML = `
       <span class="reserve-pill">🪱 Nutrientes: <strong>${res.nutrients}</strong></span>
       <span class="reserve-pill">🌱 Plantas: <strong>${res.plants}</strong></span>
@@ -391,7 +650,7 @@
     `;
 
     // Panel de Acción Actual
-    renderPhaseAction(state);
+    renderPhaseAction(state, guidance);
 
     // Modal carta pendiente
     const modalCard = $("modal-card");
@@ -454,7 +713,7 @@
     }
   }
 
-  function renderPhaseAction(state) {
+  function renderPhaseAction(state, guidance) {
     const box = $("phase-action-card");
     const b = state.board;
     const m = state.roundMeta;
@@ -504,7 +763,7 @@
             : ""
         }
         <button id="btn-start-feed" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          ➡️ Empezar Turnos (1º Conejos)
+          🖐️ Empezar a mover fichas (1º Conejos)
         </button>
       `;
       box.querySelectorAll(".pred-btn").forEach((btn) => {
@@ -521,60 +780,74 @@
     }
 
     if (activeRole) {
-      const isBotTurn = turnOwner && turnOwner.isBot;
-      const ownerLabel = turnOwner ? `${turnOwner.isBot ? "🤖 " : "👤 "}${escapeHtml(turnOwner.name)}` : "Encargado";
+      const isBotTurn = turnOwner && turnOwner.isBot && !state.controlAll;
+      const ownerLabel = state.controlAll
+        ? "👤 Tú (Tablero físico)"
+        : turnOwner
+        ? `${turnOwner.isBot ? "🤖 " : "👤 "}${escapeHtml(turnOwner.name)}`
+        : "Encargado";
 
       let title = "";
-      let instruction = "";
-      let targetKey = VALID_TARGETS[state.phase];
-      let actionBtnLabel = "⚡ Completar movimiento y pasar turno";
+      let progressHtml = "";
+      let passBtnText = "";
+      let passAction = "PASS_TURN";
 
       if (state.phase === "turn_rabbits") {
         title = "🐇 Turno de Conejos";
-        instruction = `<strong>Progreso:</strong> ${m.rabbitsMoved}/${b.rabbits} conejos movidos (2 🌱 por conejo).<br>👉 Haz clic en las <strong>Plantas (🌱)</strong> o arrastra un conejo allí. <em>Solo puedes comer plantas.</em>`;
-        actionBtnLabel = "⚡ Alimentar todos y pasar a Lince";
+        progressHtml = `<div class="hunger-bar">🐇 Alimentados: ${m.rabbitsMoved}/${b.rabbits} · Bocado actual: ${m.rabbitBites}/2 🌱</div>`;
+        if (b.plants === 0 && m.rabbitsMoved < b.rabbits) {
+          passBtnText = "💀 Retirar conejos sin comida a la Caja";
+        }
       } else if (state.phase === "turn_lynx") {
         title = "🐆 Turno de Lince Ibérico";
-        instruction = `<strong>Progreso:</strong> ${m.lynxMoved}/${b.lynx} lince(s) movidos (2 🐇 por lince).<br>👉 Haz clic en los <strong>Conejos (🐇)</strong> o arrastra el lince allí. <em>Solo puedes cazar conejos.</em>`;
-        actionBtnLabel = "⚡ Cazar y pasar a Restos orgánicos";
+        progressHtml = `<div class="hunger-bar">🐆 Alimentados: ${m.lynxMoved}/${b.lynx} · Presas actuales: ${m.lynxBites}/2 🐇</div>`;
+        if (b.rabbits === 0 && m.lynxMoved < b.lynx) {
+          passBtnText = "💀 Retirar lince sin presas a la Caja";
+        }
       } else if (state.phase === "turn_remains") {
         title = "🦴 Turno de Restos Orgánicos";
-        instruction =
-          m.pendingRemains > 0
-            ? `Hay <strong>${m.pendingRemains} conejo(s) cazados</strong>.<br>👉 Haz clic en <strong>🦴 Restos</strong> en el círculo central para colocar las fichas grises.`
-            : "No hay nuevos restos orgánicos en esta ronda.<br>👉 Pulsa para pasar el turno a <strong>🐞 Insectos</strong>.";
-        actionBtnLabel = m.pendingRemains > 0 ? "🦴 Colocar Restos y pasar a Insectos" : "➡️ Pasar turno a Insectos";
+        progressHtml = `<div class="hunger-bar">🦴 Fichas grises por colocar en el centro: ${m.pendingRemains}</div>`;
+        if (m.pendingRemains === 0) {
+          passBtnText = "➡️ No hay restos nuevos · Pasar a Insectos";
+        }
       } else if (state.phase === "turn_insects") {
-        const leftToRecycle = Math.min(b.insects - m.remainsRecycled, b.remains);
+        const left = Math.min(b.insects - m.remainsRecycled, b.remains);
         title = "🐞 Turno de Insectos";
-        instruction =
-          leftToRecycle > 0
-            ? `<strong>Reciclados:</strong> ${m.remainsRecycled}/${b.insects} (quedan ${b.remains} restos).<br>👉 Haz clic en <strong>🦴 Restos</strong> para descomponer 1 resto (+2 nutrientes).`
-            : `No hay restos que reciclar (quedan ${b.remains} restos y ${b.insects} insectos).<br>👉 Pasa el turno a <strong>🪱 Nutrientes</strong>.`;
-        actionBtnLabel = leftToRecycle > 0 ? "♻️ Reciclar todo y pasar a Nutrientes" : "➡️ Pasar turno a Nutrientes";
+        progressHtml = `<div class="hunger-bar">♻️ Reciclados: ${m.remainsRecycled}/${b.insects} · Restos disponibles: ${b.remains}</div>`;
+        if (left <= 0) {
+          passBtnText = "➡️ Pasar turno a Nutrientes";
+        }
       } else if (state.phase === "turn_nutrients") {
         const maxEx = EcoGame.engine.getMaxExchange(state);
         title = "🪱 Turno de Nutrientes";
-        instruction = `<strong>Preparados para plantar:</strong> ${m.nutrientsSentToPlants} / ${maxEx} (máx. 1 por insecto vivo).<br>👉 Haz clic en <strong>🌱 Plantas</strong> para enviar 1 nutriente y luego pulsa Pasar turno.`;
-        actionBtnLabel = "✅ Pasar turno a Plantas";
+        progressHtml =
+          m.pendingNutrients > 0
+            ? `<div class="hunger-bar">🪱 Nuevos nutrientes por recoger: ${m.pendingNutrients}</div>`
+            : `<div class="hunger-bar">🌱 Enviados a Plantas: ${m.nutrientsSentToPlants} / ${maxEx} (máx. 1 por insecto)</div>`;
+        if (m.pendingNutrients === 0) {
+          passBtnText = "✅ Pasar turno a Plantas";
+        }
       } else if (state.phase === "turn_plants") {
-        const plantYield = state.variant === "balanced" ? m.nutrientsSentToPlants * 2 : m.nutrientsSentToPlants;
         title = "🌱 Turno de Plantas";
-        instruction = `Nutrientes recibidos: <strong>${m.nutrientsSentToPlants}</strong> (brotarán <strong>+${plantYield} plantas</strong>${
-          state.variant === "balanced" && b.plants > 0 && b.insects > 0 ? " +2 por polinización" : ""
-        }).<br>👉 Haz clic en <strong>🌱 Plantas</strong> para hacerlas brotar y calcular nacimientos.`;
-        actionBtnLabel = "🌱 Hacer brotar y cerrar ronda";
+        progressHtml = `<div class="hunger-bar">🌱 Nuevas plantas por brotar: ${m.plantsToSprout}</div>`;
+        if (m.plantsToSprout === 0) {
+          passBtnText = "🐣 Comprobar nacimientos y cerrar ronda";
+        }
       }
 
       box.innerHTML = `
         <span class="phase-badge">${activeRoleObj ? activeRoleObj.emoji + " " + activeRoleObj.name : ""} · ${ownerLabel}</span>
         <h3>${title}</h3>
-        <div class="rule-preview">${instruction}</div>
+        ${progressHtml}
+        <div class="rule-preview">🖐️ <strong>Mueve las fichas en el tablero:</strong> ${guidance.hint}</div>
         ${
           isBotTurn
-            ? `<div class="role-notice">🤖 <strong>${ownerLabel}</strong> está realizando su movimiento...</div>`
+            ? `<div class="role-notice">🤖 <strong>${ownerLabel}</strong> está moviendo sus fichas...</div>`
             : canAct
-            ? `<button id="btn-pass-or-complete" class="btn btn-primary btn-lg full-width">${actionBtnLabel}</button>`
+            ? `
+              ${passBtnText ? `<button id="btn-pass-or-complete" class="btn btn-primary btn-lg full-width" style="margin-bottom:0.45rem;">${passBtnText}</button>` : ""}
+              ${!passBtnText ? `<button id="btn-quick-turn" class="btn btn-ghost btn-sm full-width">⚡ Completar turno rápido</button>` : ""}
+            `
             : `<div class="role-notice">⏳ Esperando a que <strong>${ownerLabel}</strong> mueva sus fichas en el tablero.</div>`
         }
       `;
@@ -583,11 +856,14 @@
       if (passBtn) {
         passBtn.addEventListener("click", () => {
           EcoGame.sound.playPop();
-          if (state.phase === "turn_nutrients") {
-            EcoGame.room.dispatchGameAction("PASS_TURN");
-          } else {
-            EcoGame.room.dispatchGameAction("PERFORM_MOVE", { targetZone: targetKey, mode: "all" });
-          }
+          EcoGame.room.dispatchGameAction(passAction);
+        });
+      }
+      const quickBtn = $("btn-quick-turn");
+      if (quickBtn) {
+        quickBtn.addEventListener("click", () => {
+          EcoGame.sound.playPop();
+          EcoGame.room.dispatchGameAction("PASS_TURN");
         });
       }
       return;
@@ -627,6 +903,7 @@
   }
 
   function renderSummary(state) {
+    $("modal-card").classList.add("hidden");
     showScreen("screen-summary");
     const analysis = EcoGame.engine.analyzeEcosystem(state);
     $("summary-title").textContent = state.collapsed
@@ -699,6 +976,9 @@
   EcoGame.ui = {
     showScreen,
     showToast,
+    spawnFloaterAtLastPointer(text) {
+      spawnFloater(lastPointerPos.x, lastPointerPos.y, text);
+    },
     shakeZone,
     renderLobby,
     renderGame,

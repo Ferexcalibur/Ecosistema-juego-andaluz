@@ -57,6 +57,9 @@
         EcoGame.ui.shakeZone(targetZone);
         EcoGame.ui.showToast(errMsg);
       },
+      onFloater: (txt) => {
+        EcoGame.ui.spawnFloaterAtLastPointer(txt);
+      },
       onClosed: (reason) => {
         EcoGame.ui.showToast(reason);
         $("topbar-room-pill").classList.add("hidden");
