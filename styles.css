@@ -957,6 +957,39 @@ h1, h2, h3, h4 {
   transform: scale(0.88);
 }
 
+.token-chip {
+  position: relative;
+}
+
+.token-pip {
+  position: absolute;
+  bottom: -5px;
+  right: -5px;
+  background: #1f2d24;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 999px;
+  border: 1.5px solid #fff;
+  pointer-events: none;
+}
+
+.token-pip.pip-mid {
+  background: #f08c00;
+}
+
+.token-pip.pip-done {
+  background: #2b8a3e;
+}
+
+.token-chip.token-done {
+  opacity: 0.62;
+  filter: saturate(0.75);
+  cursor: not-allowed;
+}
+
 .drag-ghost {
   position: fixed;
   z-index: 999;
