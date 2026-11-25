@@ -44,6 +44,7 @@
   let lastSeenChatCount = 0;
   let lastPendingCardKey = null;
   let dragInitialized = false;
+  let suppressNextBoardClick = false;
   let lastPointerPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
 
   function getZoneKeyAtPoint(x, y) {
@@ -89,6 +90,8 @@
       }
 
       if (tokenEl.classList.contains("token-done")) {
+        suppressNextBoardClick = true;
+        setTimeout(() => { suppressNextBoardClick = false; }, 120);
         EcoGame.sound.playWarn();
         showToast("🚫 Esta ficha ya completó su ración de esta ronda. ¡Debes mover otra ficha!");
         return;
@@ -163,6 +166,10 @@
 
     // También permitir clic directo en ficha objetivo o zona objetivo iluminada
     $("ecosystem-board").addEventListener("click", (e) => {
+      if (suppressNextBoardClick) {
+        suppressNextBoardClick = false;
+        return;
+      }
       const state = EcoGame.room.state;
       if (!state || state.status !== "playing") return;
       const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
