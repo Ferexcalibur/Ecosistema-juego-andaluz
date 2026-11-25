@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ecosistema Andaluz — Juego Interactivo de Red Trófica</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" defer></script>
+  <script src="js/data.js" defer></script>
+  <script src="js/sound.js" defer></script>
+  <script src="js/engine.js" defer></script>
+  <script src="js/network.js" defer></script>
+  <script src="js/ui.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <!-- Cabecera global -->
+  <header class="topbar">
+    <div class="topbar-brand" id="btn-home-logo" role="button" tabindex="0" title="Volver al inicio">
+      <span class="brand-icon" aria-hidden="true">🌿</span>
+      <div>
+        <h1>Ecosistema Andaluz</h1>
+        <p class="brand-subtitle">¿Qué ocurre si desaparece una especie?</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div id="topbar-room-pill" class="room-pill hidden">
+        <span>Sala:</span>
+        <strong id="topbar-room-code">------</strong>
+        <button id="btn-copy-code-top" class="btn-icon-mini" title="Copiar código">📋</button>
+      </div>
+      <button id="btn-toggle-sound" class="btn btn-ghost btn-sm" title="Activar o silenciar sonidos">🔊 Sonido</button>
+      <button id="btn-open-rules" class="btn btn-ghost btn-sm">📖 Reglas y Saberes</button>
+    </div>
+  </header>
+
+  <main class="app-container">
+    <!-- ==================== PANTALLA INICIO ==================== -->
+    <section id="screen-home" class="screen active">
+      <div class="hero-card">
+        <div class="hero-badge">Ciencias de la Naturaleza · 3º y 4º de Primaria · Andalucía</div>
+        <h2>Descubre el equilibrio de Doñana y Sierra Morena</h2>
+        <p>
+          Simula una red trófica real con nutrientes, plantas, conejos, linces ibéricos e insectos.
+          Crea una sala con código para jugar en equipo desde distintos dispositivos o juega en modo local.
+        </p>
+        <div class="hero-species-strip" aria-hidden="true">
+          <span class="chip-preview chip-brown">🪱 Nutrientes</span>
+          <span class="chip-preview chip-green">🌱 Plantas</span>
+          <span class="chip-preview chip-white">🐇 Conejos</span>
+          <span class="chip-preview chip-orange">🐆 Lince Ibérico</span>
+          <span class="chip-preview chip-yellow">🐞 Insectos</span>
+          <span class="chip-preview chip-grey">🦴 Restos orgánicos</span>
+        </div>
+      </div>
+
+      <div class="home-grid">
+        <!-- Crear Sala -->
+        <article class="mode-card mode-create">
+          <div class="mode-icon">🏕️</div>
+          <h3>Crear Sala Multijugador</h3>
+          <p>Genera un código único para que tus compañeros o alumnos se unan desde cualquier navegador.</p>
+          <form id="form-create-room" class="stack-form">
+            <label>
+              Tu nombre
+              <input type="text" id="create-name" maxlength="20" placeholder="Ej. Sofía (Profe / Equipo 1)" required />
+            </label>
+            <label>
+              Ecosistema andaluz
+              <select id="create-ecosystem">
+                <option value="donana">Parque Nacional de Doñana</option>
+                <option value="sierra_morena">Sierra Morena (Bosque Mediterráneo)</option>
+              </select>
+            </label>
+            <label>
+              Variante de reglas
+              <select id="create-variant">
+                <option value="classic">Clásica del documento (fidelidad 100%)</option>
+                <option value="balanced">Equilibrio sostenible (para notar más la carta de Ronda 3)</option>
+              </select>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="create-role-lock" />
+              <span>Cada jugador controla solo su zona asignada</span>
+            </label>
+            <button type="submit" class="btn btn-primary btn-lg">Crear Sala y Obtener Código</button>
+          </form>
+        </article>
+
+        <!-- Unirse a Sala -->
+        <article class="mode-card mode-join">
+          <div class="mode-icon">🔑</div>
+          <h3>Unirse con Código</h3>
+          <p>Introduce el código de 6 letras o números que te ha compartido el anfitrión de la sala.</p>
+          <form id="form-join-room" class="stack-form">
+            <label>
+              Tu nombre
+              <input type="text" id="join-name" maxlength="20" placeholder="Ej. Mateo" required />
+            </label>
+            <label>
+              Código de sala
+              <input type="text" id="join-code" maxlength="8" placeholder="Ej. ECO482" class="input-code" required />
+            </label>
+            <button type="submit" class="btn btn-secondary btn-lg">Entrar en la Sala</button>
+          </form>
+          <div id="join-status" class="status-msg hidden"></div>
+        </article>
+
+        <!-- Modo Local / Un dispositivo -->
+        <article class="mode-card mode-local">
+          <div class="mode-icon">🖥️</div>
+          <h3>Jugar en un Solo Dispositivo</h3>
+          <p>Ideal para jugar de forma individual, en pareja o proyectado en la pizarra digital del aula.</p>
+          <form id="form-local-game" class="stack-form">
+            <label>
+              Nombre del equipo o jugador
+              <input type="text" id="local-name" maxlength="24" placeholder="Ej. Equipo Lince" value="Equipo Explorador" required />
+            </label>
+            <label>
+              Ecosistema andaluz
+              <select id="local-ecosystem">
+                <option value="donana">Parque Nacional de Doñana</option>
+                <option value="sierra_morena">Sierra Morena (Bosque Mediterráneo)</option>
+              </select>
+            </label>
+            <label>
+              Variante de reglas
+              <select id="local-variant">
+                <option value="classic">Clásica del documento (fidelidad 100%)</option>
+                <option value="balanced">Equilibrio sostenible (para notar más la carta de Ronda 3)</option>
+              </select>
+            </label>
+            <button type="submit" class="btn btn-accent btn-lg">Empezar Partida Local</button>
+          </form>
+        </article>
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA LOBBY ==================== -->
+    <section id="screen-lobby" class="screen">
+      <div class="lobby-layout">
+        <div class="lobby-card lobby-code-panel">
+          <div class="lobby-header-row">
+            <div>
+              <span class="badge-pill" id="lobby-eco-badge">Doñana</span>
+              <span class="badge-pill badge-outline" id="lobby-variant-badge">Reglas Clásicas</span>
+            </div>
+            <button id="btn-leave-lobby" class="btn btn-ghost btn-sm">Salir de la sala</button>
+          </div>
+
+          <h2>Sala de espera</h2>
+          <p class="muted">Comparte este código o el enlace directo para que otros jugadores entren en tu partida:</p>
+
+          <div class="code-display-box">
+            <span class="code-label">CÓDIGO DE SALA</span>
+            <div id="lobby-code-text" class="code-big">------</div>
+            <div class="code-buttons">
+              <button id="btn-copy-code" class="btn btn-primary btn-sm">📋 Copiar código</button>
+              <button id="btn-copy-link" class="btn btn-secondary btn-sm">🔗 Copiar enlace</button>
+            </div>
+          </div>
+
+          <div id="lobby-conn-status" class="conn-banner">
+            🟢 Sala conectada y lista para recibir jugadores
+          </div>
+
+          <h3>Elige tu rol en el ecosistema</h3>
+          <p class="muted small">Como en la actividad de aula, cada persona puede encargarse de una zona del tablero:</p>
+          <div id="lobby-roles-grid" class="roles-grid"></div>
+        </div>
+
+        <div class="lobby-card lobby-players-panel">
+          <h3>Jugadores conectados (<span id="lobby-player-count">1</span>)</h3>
+          <ul id="lobby-player-list" class="player-list"></ul>
+
+          <div class="lobby-start-area">
+            <button id="btn-start-game" class="btn btn-primary btn-lg full-width hidden">🚀 Comenzar Partida</button>
+            <p id="lobby-wait-msg" class="muted center-text hidden">Esperando a que el anfitrión inicie la partida...</p>
+          </div>
+
+          <div class="chat-box compact-chat">
+            <h4>💬 Chat de sala</h4>
+            <div id="lobby-chat-messages" class="chat-messages"></div>
+            <form id="form-lobby-chat" class="chat-form">
+              <input type="text" id="lobby-chat-input" maxlength="160" placeholder="Escribe un mensaje al equipo..." />
+              <button type="submit" class="btn btn-secondary btn-sm">Enviar</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA JUEGO ==================== -->
+    <section id="screen-game" class="screen">
+      <!-- Barra de estado de la partida -->
+      <div class="game-hud">
+        <div class="hud-left">
+          <div class="hud-round">
+            <span class="hud-label">RONDA</span>
+            <strong id="hud-round-num">1 / 5</strong>
+          </div>
+          <div class="hud-eco">
+            <span id="hud-eco-name">Doñana</span>
+            <small id="hud-my-role">Modo Cooperativo</small>
+          </div>
+        </div>
+
+        <div id="phase-stepper" class="phase-stepper" aria-label="Fases de la ronda"></div>
+
+        <div class="hud-right">
+          <button id="btn-finish-early" class="btn btn-ghost btn-sm" title="Pasar a la puesta en común final">🏁 Puesta en común</button>
+          <button id="btn-leave-game" class="btn btn-ghost btn-sm">Salir</button>
+        </div>
+      </div>
+
+      <!-- Banner de Carta del Ecosistema activa -->
+      <div id="active-card-banner" class="event-banner hidden">
+        <div class="event-banner-icon" id="event-banner-icon">🃏</div>
+        <div class="event-banner-body">
+          <strong id="event-banner-title">Carta activa</strong>
+          <p id="event-banner-desc"></p>
+        </div>
+        <span id="event-banner-badge" class="badge-pill">Efecto activo</span>
+      </div>
+
+      <div class="game-main-grid">
+        <!-- Columna Izquierda: Tablero 5 zonas + Reserva -->
+        <div class="board-column">
+          <div class="ecosystem-board" id="ecosystem-board" aria-label="Tablero del ecosistema con cinco zonas">
+            <!-- Zona 1: Suelo / Nutrientes (Marrón) -->
+            <div class="zone zone-soil" data-zone="nutrients">
+              <div class="zone-header">
+                <span class="zone-title">🪱 Zona Suelo · Nutrientes</span>
+                <span class="zone-count" id="count-nutrients">4</span>
+              </div>
+              <div class="zone-decor decor-soil" aria-hidden="true"></div>
+              <div class="tokens-area" id="tokens-nutrients"></div>
+              <div class="zone-footer" id="owner-nutrients"></div>
+            </div>
+
+            <!-- Zona 2: Productores / Plantas (Verde) -->
+            <div class="zone zone-plants" data-zone="plants">
+              <div class="zone-header">
+                <span class="zone-title">🌱 Productores · Plantas</span>
+                <span class="zone-count" id="count-plants">10</span>
+              </div>
+              <div class="zone-decor decor-sun" aria-hidden="true">☀️</div>
+              <div class="tokens-area" id="tokens-plants"></div>
+              <div class="zone-footer" id="owner-plants"></div>
+            </div>
+
+            <!-- Zona 3: Consumidores 1º / Conejos (Azul claro) -->
+            <div class="zone zone-rabbits" data-zone="rabbits">
+              <div class="zone-header">
+                <span class="zone-title">🐇 Consumidores 1º · Conejos</span>
+                <span class="zone-count" id="count-rabbits">5</span>
+              </div>
+              <div class="zone-decor decor-carrots" aria-hidden="true">🥕🥕🥕</div>
+              <div class="tokens-area" id="tokens-rabbits"></div>
+              <div class="zone-footer" id="owner-rabbits"></div>
+            </div>
+
+            <!-- Zona 4: Consumidores 2º / Lince (Naranja) -->
+            <div class="zone zone-lynx" data-zone="lynx">
+              <div class="zone-header">
+                <span class="zone-title">🐆 Consumidores 2º · Lince</span>
+                <span class="zone-count" id="count-lynx">1</span>
+              </div>
+              <div class="zone-decor decor-mountains" aria-hidden="true">⛰️🌳</div>
+              <div class="tokens-area" id="tokens-lynx"></div>
+              <div class="zone-footer" id="owner-lynx"></div>
+            </div>
+
+            <!-- Zona 5: Centro circular / Insectos y Restos (Amarillo) -->
+            <div class="zone zone-center" data-zone="center">
+              <div class="zone-header center-header">
+                <span class="zone-title">🐞 Insectos y Restos 🦴</span>
+              </div>
+              <div class="center-counts">
+                <span class="mini-pill pill-yellow">Insectos: <strong id="count-insects">3</strong></span>
+                <span class="mini-pill pill-grey">Restos: <strong id="count-remains">0</strong></span>
+              </div>
+              <div class="tokens-area tokens-center" id="tokens-center"></div>
+              <div class="zone-footer center-footer" id="owner-center"></div>
+            </div>
+          </div>
+
+          <!-- Caja Reserva de la Naturaleza -->
+          <div class="reserve-box">
+            <div class="reserve-title">
+              <span>📦 Caja "Reserva de la Naturaleza"</span>
+              <small id="reserve-mode-label">Fichas de repuesto e intercambio</small>
+            </div>
+            <div id="reserve-items" class="reserve-items"></div>
+          </div>
+        </div>
+
+        <!-- Columna Derecha: Controles, Registro, Gráfica y Chat -->
+        <aside class="side-column">
+          <div class="side-tabs">
+            <button class="side-tab active" data-tab="actions">🎮 Turno y Acciones</button>
+            <button class="side-tab" data-tab="data">📊 Registro y Gráfica</button>
+            <button class="side-tab" data-tab="chat">💬 Equipo <span id="chat-badge" class="chat-badge hidden">0</span></button>
+          </div>
+
+          <!-- Tab Acciones -->
+          <div id="tab-actions" class="tab-panel active">
+            <div id="phase-action-card" class="action-card"></div>
+
+            <div class="log-card">
+              <h4>📜 Diario del Ecosistema</h4>
+              <ul id="game-log" class="game-log"></ul>
+            </div>
+          </div>
+
+          <!-- Tab Registro y Gráfica -->
+          <div id="tab-data" class="tab-panel">
+            <div class="data-card">
+              <h4>📈 Evolución de especies (Efecto dominó)</h4>
+              <div id="chart-container" class="chart-container"></div>
+              <div class="chart-legend">
+                <span><i style="background:#8d5b32"></i>Nutrientes</span>
+                <span><i style="background:#2f9e44"></i>Plantas</span>
+                <span><i style="background:#4dabf7"></i>Conejos</span>
+                <span><i style="background:#f76707"></i>Linces</span>
+                <span><i style="background:#fab005"></i>Insectos</span>
+                <span><i style="background:#868e96"></i>Restos</span>
+              </div>
+            </div>
+
+            <div class="data-card">
+              <h4>📋 Tabla de registro por equipos</h4>
+              <div class="table-scroll">
+                <table class="record-table">
+                  <thead>
+                    <tr>
+                      <th>Ronda</th>
+                      <th>🪱</th>
+                      <th>🌱</th>
+                      <th>🐇</th>
+                      <th>🐆</th>
+                      <th>🐞</th>
+                      <th>🦴</th>
+                    </tr>
+                  </thead>
+                  <tbody id="record-table-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab Chat -->
+          <div id="tab-chat" class="tab-panel">
+            <div class="chat-box full-chat">
+              <div class="chat-prompts">
+                <span class="muted small">Preguntas guía del docente:</span>
+                <div class="prompt-chips">
+                  <button type="button" class="prompt-chip" data-msg="¿Qué pasará en la siguiente ronda si desaparecen los insectos?">🐝 ¿Y sin insectos?</button>
+                  <button type="button" class="prompt-chip" data-msg="¿Por qué son necesarios los linces para los conejos?">🐆 ¿Por qué importa el lince?</button>
+                  <button type="button" class="prompt-chip" data-msg="Justifico mi jugada: ">💡 Justificar jugada</button>
+                </div>
+              </div>
+              <div id="game-chat-messages" class="chat-messages"></div>
+              <form id="form-game-chat" class="chat-form">
+                <input type="text" id="game-chat-input" maxlength="180" placeholder="Comenta o justifica tu jugada..." />
+                <button type="submit" class="btn btn-secondary btn-sm">Enviar</button>
+              </form>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ==================== PANTALLA PUESTA EN COMÚN Y RETO FINAL ==================== -->
+    <section id="screen-summary" class="screen">
+      <div class="summary-container">
+        <div class="summary-hero">
+          <div class="hero-badge">Puesta en común · Pensamiento Sistémico</div>
+          <h2 id="summary-title">Resultado de nuestro Ecosistema</h2>
+          <p id="summary-subtitle"></p>
+        </div>
+
+        <div class="summary-grid">
+          <div class="summary-card">
+            <h3>📊 Evolución final del tablero</h3>
+            <div id="summary-chart" class="chart-container"></div>
+            <div id="summary-final-stats" class="final-stats-grid"></div>
+          </div>
+
+          <div class="summary-card">
+            <h3>🔗 ¿Por qué ocurrió este efecto dominó?</h3>
+            <ul id="summary-insights" class="insights-list"></ul>
+          </div>
+        </div>
+
+        <!-- Comprobación del aprendizaje (Página 4 del PDF) -->
+        <div class="summary-card quiz-card">
+          <div class="quiz-header">
+            <span class="badge-pill">Comprobación del aprendizaje (Noticia real)</span>
+            <h3>Predice qué ocurrirá en la naturaleza</h3>
+            <p class="muted">En la actividad del documento se propone analizar una noticia real sobre la desaparición de abejas o lobos/depredadores. ¡Pon a prueba tu pensamiento sistémico!</p>
+          </div>
+          <div id="quiz-container" class="quiz-grid"></div>
+        </div>
+
+        <div class="summary-actions">
+          <button id="btn-play-again" class="btn btn-primary btn-lg">🔄 Jugar otra partida</button>
+          <button id="btn-back-home" class="btn btn-ghost btn-lg">🏠 Volver al inicio</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal Reglas y Saberes Básicos -->
+  <div id="modal-rules" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-rules-title">
+    <div class="modal-backdrop" id="modal-rules-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-rules-title">📖 Reglas del Juego y Saberes Básicos</h2>
+        <button id="btn-close-rules" class="btn-icon-mini" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-body" id="rules-modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Modal Carta del Ecosistema (Animación Ronda 3) -->
+  <div id="modal-card" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-card-reveal">
+      <span class="badge-pill">Inicio de Ronda · Carta del Ecosistema</span>
+      <div id="card-reveal-box" class="ecosystem-card-art"></div>
+      <button id="btn-confirm-card" class="btn btn-primary btn-lg">Aplicar efecto al tablero</button>
+    </div>
+  </div>
+
+  <!-- Notificaciones Toast -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+</body>
+</html>
