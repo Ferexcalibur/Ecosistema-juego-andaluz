@@ -279,7 +279,7 @@
     });
 
     containerEl.innerHTML = `
-      <svg viewBox="0 0 ${width} ${height}" width="100%" height="auto" role="img" aria-label="Gráfica de evolución de especies">
+      <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;" role="img" aria-label="Gráfica de evolución de especies">
         ${gridLines}
         ${xLabels}
         ${paths}
