@@ -88,10 +88,17 @@
         return;
       }
 
+      if (tokenEl.classList.contains("token-done")) {
+        EcoGame.sound.playWarn();
+        showToast("🚫 Esta ficha ya completó su ración de esta ronda. ¡Debes mover otra ficha!");
+        return;
+      }
+
       e.preventDefault();
       lastPointerPos = { x: e.clientX, y: e.clientY };
       dragState = {
         sourceKey: tokenEl.dataset.dragSource,
+        tokenIndex: tokenEl.dataset.tokenIndex !== undefined ? Number(tokenEl.dataset.tokenIndex) : null,
         emoji: tokenEl.dataset.dragEmoji || tokenEl.textContent.trim().slice(0, 2),
         chipClass: tokenEl.dataset.chipClass || "token-plants",
         originEl: tokenEl,
@@ -145,6 +152,7 @@
         EcoGame.room.dispatchGameAction("PERFORM_MOVE", {
           sourceZone: current.sourceKey,
           targetZone: hit.key,
+          tokenIndex: current.tokenIndex,
           mode: "one",
         });
       }
@@ -212,15 +220,19 @@
     const m = state.roundMeta;
     const p = state.phase;
     if (p === "turn_rabbits") {
-      const canEat = b.plants >= 1 && (m.rabbitBites === 1 || b.plants >= 2);
+      const rp = Array.isArray(m.rabbitProgress) ? m.rabbitProgress : [];
+      const anyNeedsOne = rp.some((v) => v === 1);
+      const canEat = b.plants >= 2 || (anyNeedsOne && b.plants >= 1);
       return canEat
-        ? { source: "rabbits", target: "plants", hint: "Arrastra un 🐇 Conejo sobre una 🌱 Planta (o 🌱 Planta a 📦 Reserva)" }
+        ? { source: "rabbits", target: "plants", hint: "Arrastra cada 🐇 Conejo (que no tenga ✅) sobre una 🌱 Planta dos veces (2 plantas por conejo)" }
         : { source: "rabbits", target: "reserve", hint: "No quedan plantas: arrastra los 🐇 Conejos sin comida a 📦 Reserva" };
     }
     if (p === "turn_lynx") {
-      const canHunt = b.rabbits >= 1 && (m.lynxBites === 1 || b.rabbits >= 2);
+      const lp = Array.isArray(m.lynxProgress) ? m.lynxProgress : [];
+      const anyNeedsOne = lp.some((v) => v === 1);
+      const canHunt = b.rabbits >= 2 || (anyNeedsOne && b.rabbits >= 1);
       return canHunt
-        ? { source: "lynx", target: "rabbits", hint: "Arrastra el 🐆 Lince sobre un 🐇 Conejo para cazar (2 conejos por lince)" }
+        ? { source: "lynx", target: "rabbits", hint: "Arrastra cada 🐆 Lince sobre un 🐇 Conejo dos veces (2 conejos por lince)" }
         : { source: "lynx", target: "reserve", hint: "No quedan suficientes conejos: arrastra el 🐆 Lince a 📦 Reserva" };
     }
     if (p === "turn_remains") {
@@ -241,22 +253,33 @@
     return { source: null, target: null, hint: "" };
   }
 
-  function renderTokens(containerId, count, cssClass, emoji, roleKey, isDraggable, isTargetGlow, emojisPool = null) {
+  function renderTokens(containerId, count, cssClass, emoji, roleKey, isDraggable, isTargetGlow, emojisPool = null, pipBuilder = null) {
     const el = $(containerId);
     el.innerHTML = "";
     const capped = Math.min(count, 28);
     for (let i = 0; i < capped; i++) {
       const chipEmoji = emojisPool ? emojisPool[i % emojisPool.length] : emoji;
+      const pipInfo = pipBuilder ? pipBuilder(i) : null;
+      const isDone = pipInfo && pipInfo.done;
       const chip = document.createElement("span");
-      chip.className = `token-chip ${cssClass} ${isDraggable ? "token-draggable" : ""} ${
+      chip.className = `token-chip ${cssClass} ${isDraggable && !isDone ? "token-draggable" : ""} ${
         isTargetGlow ? "token-target-glow" : ""
-      }`;
+      } ${isDone ? "token-done" : ""}`;
       chip.textContent = chipEmoji;
+      if (pipInfo && pipInfo.text) {
+        const pip = document.createElement("span");
+        pip.className = `token-pip ${pipInfo.cls || ""}`;
+        pip.textContent = pipInfo.text;
+        chip.appendChild(pip);
+      }
       if (isDraggable) {
         chip.dataset.dragSource = roleKey;
+        chip.dataset.tokenIndex = String(i);
         chip.dataset.dragEmoji = chipEmoji;
         chip.dataset.chipClass = cssClass;
-        chip.title = "Mantén pulsado y arrastra esta ficha";
+        chip.title = isDone
+          ? "Esta ficha ya completó su acción en esta ronda"
+          : "Mantén pulsado y arrastra esta ficha";
       }
       el.appendChild(chip);
     }
@@ -553,6 +576,40 @@
     const dragSrc = guidance.source;
     const targetKey = guidance.target;
 
+    const m = state.roundMeta;
+    const nutPip =
+      state.phase === "turn_nutrients" && m.pendingNutrients === 0
+        ? (i) =>
+            i < m.nutrientsSentToPlants
+              ? { text: "✓", cls: "pip-done", done: true }
+              : null
+        : null;
+    const rabPip =
+      state.phase === "turn_rabbits" && Array.isArray(m.rabbitProgress)
+        ? (i) => {
+            const v = m.rabbitProgress[i] || 0;
+            if (v >= 2) return { text: "✓", cls: "pip-done", done: true };
+            if (v === 1) return { text: "1/2", cls: "pip-mid", done: false };
+            return { text: "0/2", cls: "", done: false };
+          }
+        : null;
+    const lynxPip =
+      state.phase === "turn_lynx" && Array.isArray(m.lynxProgress)
+        ? (i) => {
+            const v = m.lynxProgress[i] || 0;
+            if (v >= 2) return { text: "✓", cls: "pip-done", done: true };
+            if (v === 1) return { text: "1/2", cls: "pip-mid", done: false };
+            return { text: "0/2", cls: "", done: false };
+          }
+        : null;
+    const insPip =
+      state.phase === "turn_insects" && Array.isArray(m.insectRecycled)
+        ? (i) =>
+            m.insectRecycled[i]
+              ? { text: "✓", cls: "pip-done", done: true }
+              : { text: "0/1", cls: "", done: false }
+        : null;
+
     renderTokens(
       "tokens-nutrients",
       b.nutrients,
@@ -560,7 +617,9 @@
       "🪱",
       "nutrients",
       canAct && dragSrc === "nutrients",
-      canAct && targetKey === "nutrients"
+      canAct && targetKey === "nutrients",
+      null,
+      nutPip
     );
     renderTokens(
       "tokens-plants",
@@ -578,7 +637,9 @@
       "🐇",
       "rabbits",
       canAct && dragSrc === "rabbits",
-      canAct && targetKey === "rabbits"
+      canAct && targetKey === "rabbits",
+      null,
+      rabPip
     );
     renderTokens(
       "tokens-lynx",
@@ -587,7 +648,9 @@
       "🐆",
       "lynx",
       canAct && dragSrc === "lynx",
-      canAct && targetKey === "lynx"
+      canAct && targetKey === "lynx",
+      null,
+      lynxPip
     );
     renderTokens(
       "tokens-insects",
@@ -597,7 +660,8 @@
       "insects",
       canAct && dragSrc === "insects",
       canAct && targetKey === "insects",
-      EcoGame.SPECIES.insects.emojis
+      EcoGame.SPECIES.insects.emojis,
+      insPip
     );
     renderTokens(
       "tokens-remains",
@@ -793,15 +857,21 @@
       let passAction = "PASS_TURN";
 
       if (state.phase === "turn_rabbits") {
-        title = "🐇 Turno de Conejos";
-        progressHtml = `<div class="hunger-bar">🐇 Alimentados: ${m.rabbitsMoved}/${b.rabbits} · Bocado actual: ${m.rabbitBites}/2 🌱</div>`;
-        if (b.plants === 0 && m.rabbitsMoved < b.rabbits) {
+        const rp = Array.isArray(m.rabbitProgress) ? m.rabbitProgress : [];
+        const fullCount = rp.filter((v) => v >= 2).length;
+        const anyPartial = rp.some((v) => v === 1);
+        title = "🐇 Turno de Conejos (2 plantas por cada conejo)";
+        progressHtml = `<div class="hunger-bar">🐇 Llenos: ${fullCount}/${b.rabbits} · Cada conejo con 0/2 o 1/2 debe comer 2 🌱</div>`;
+        if ((b.plants === 0 || (b.plants === 1 && !anyPartial)) && fullCount < b.rabbits) {
           passBtnText = "💀 Retirar conejos sin comida a la Caja";
         }
       } else if (state.phase === "turn_lynx") {
-        title = "🐆 Turno de Lince Ibérico";
-        progressHtml = `<div class="hunger-bar">🐆 Alimentados: ${m.lynxMoved}/${b.lynx} · Presas actuales: ${m.lynxBites}/2 🐇</div>`;
-        if (b.rabbits === 0 && m.lynxMoved < b.lynx) {
+        const lp = Array.isArray(m.lynxProgress) ? m.lynxProgress : [];
+        const fullCount = lp.filter((v) => v >= 2).length;
+        const anyPartial = lp.some((v) => v === 1);
+        title = "🐆 Turno de Lince Ibérico (2 conejos por cada lince)";
+        progressHtml = `<div class="hunger-bar">🐆 Llenos: ${fullCount}/${b.lynx} · Cada lince caza sus 2 🐇</div>`;
+        if ((b.rabbits === 0 || (b.rabbits === 1 && !anyPartial)) && fullCount < b.lynx) {
           passBtnText = "💀 Retirar lince sin presas a la Caja";
         }
       } else if (state.phase === "turn_remains") {
@@ -811,9 +881,11 @@
           passBtnText = "➡️ No hay restos nuevos · Pasar a Insectos";
         }
       } else if (state.phase === "turn_insects") {
-        const left = Math.min(b.insects - m.remainsRecycled, b.remains);
-        title = "🐞 Turno de Insectos";
-        progressHtml = `<div class="hunger-bar">♻️ Reciclados: ${m.remainsRecycled}/${b.insects} · Restos disponibles: ${b.remains}</div>`;
+        const ir = Array.isArray(m.insectRecycled) ? m.insectRecycled : [];
+        const doneCount = ir.filter(Boolean).length;
+        const left = Math.min(b.insects - doneCount, b.remains);
+        title = "🐞 Turno de Insectos (1 resto por cada insecto)";
+        progressHtml = `<div class="hunger-bar">♻️ Reciclados: ${doneCount}/${b.insects} · Restos disponibles: ${b.remains}</div>`;
         if (left <= 0) {
           passBtnText = "➡️ Pasar turno a Nutrientes";
         }

@@ -25,7 +25,7 @@
         : { nutrients: 6, plants: 5, rabbits: 2, lynx: 1, insects: 2, remains: 12 };
 
     return {
-      status: "lobby", // 'lobby' | 'playing' | 'finished'
+      status: "lobby",
       roomCode: config.roomCode || null,
       ecosystem,
       variant,
@@ -39,14 +39,12 @@
       reserve: { ...initialReserve },
       roundMeta: {
         plantsAtFeedStart: initialBoard.plants,
-        rabbitsMoved: 0,
-        rabbitBites: 0,
+        rabbitProgress: [],
         fedRabbits: 0,
-        lynxMoved: 0,
-        lynxBites: 0,
+        lynxProgress: [],
         fedLynx: 0,
         pendingRemains: 0,
-        remainsRecycled: 0,
+        insectRecycled: [],
         pendingNutrients: 0,
         nutrientsSentToPlants: 0,
         plantsToSprout: 0,
@@ -119,14 +117,12 @@
   function resetRoundMeta(state) {
     state.roundMeta = {
       plantsAtFeedStart: state.board.plants,
-      rabbitsMoved: 0,
-      rabbitBites: 0,
+      rabbitProgress: Array(state.board.rabbits).fill(0),
       fedRabbits: 0,
-      lynxMoved: 0,
-      lynxBites: 0,
+      lynxProgress: Array(state.board.lynx).fill(0),
       fedLynx: 0,
       pendingRemains: 0,
-      remainsRecycled: 0,
+      insectRecycled: Array(state.board.insects).fill(false),
       pendingNutrients: 0,
       nutrientsSentToPlants: 0,
       plantsToSprout: 0,
@@ -209,6 +205,12 @@
     return false;
   }
 
+  function enterTurnLynx(state) {
+    state.roundMeta.lynxProgress = Array(state.board.lynx).fill(0);
+    state.roundMeta.fedRabbits = state.board.rabbits;
+    state.phase = "turn_lynx";
+  }
+
   function enterTurnInsects(state) {
     state.phase = "turn_insects";
     const totalInsects = state.board.insects;
@@ -233,6 +235,7 @@
         );
       }
     }
+    state.roundMeta.insectRecycled = Array(state.board.insects).fill(false);
     checkSustainability(state);
   }
 
@@ -381,66 +384,90 @@
     return Math.min(state.board.insects, state.board.nutrients, state.reserve.plants);
   }
 
-  /**
-   * Movimiento físico ficha a ficha (o rápido con mode='all' para Bots).
-   * sourceZone: de dónde sale la ficha ('rabbits', 'plants', 'lynx', 'insects', 'remains', 'nutrients', 'tray_remains', 'tray_nutrients', 'tray_plants', 'reserve_plants', 'reserve_nutrients')
-   * targetZone: dónde se suelta ('plants', 'rabbits', 'remains', 'nutrients', 'reserve', etc.)
-   */
-  function performMove(state, targetZone, mode = "one", sourceZone = null) {
+  function ensureArrays(m, board) {
+    if (!Array.isArray(m.rabbitProgress) || m.rabbitProgress.length !== board.rabbits) {
+      if (!Array.isArray(m.rabbitProgress)) m.rabbitProgress = Array(board.rabbits).fill(0);
+    }
+    if (!Array.isArray(m.lynxProgress) || m.lynxProgress.length !== board.lynx) {
+      if (!Array.isArray(m.lynxProgress)) m.lynxProgress = Array(board.lynx).fill(0);
+    }
+    if (!Array.isArray(m.insectRecycled) || m.insectRecycled.length !== board.insects) {
+      if (!Array.isArray(m.insectRecycled)) m.insectRecycled = Array(board.insects).fill(false);
+    }
+  }
+
+  function performMove(state, targetZone, mode = "one", sourceZone = null, tokenIndex = null) {
     const next = cloneState(state);
     const m = next.roundMeta;
+    ensureArrays(m, next.board);
 
     if (next.phase === "turn_rabbits") {
       if (mode === "all") {
-        const remaining = Math.max(0, next.board.rabbits - m.rabbitsMoved);
-        // Si había 1 bocado pendiente y hay al menos 1 planta, completar ese conejo primero
-        if (m.rabbitBites === 1 && next.board.plants >= 1) {
-          returnToReserve(next, "plants", 1);
-          m.rabbitBites = 0;
-          m.fedRabbits += 1;
-          m.rabbitsMoved += 1;
+        // Completa los conejos que aún tienen progreso < 2
+        for (let i = 0; i < m.rabbitProgress.length; i++) {
+          while (m.rabbitProgress[i] < 2 && next.board.plants > 0) {
+            returnToReserve(next, "plants", 1);
+            m.rabbitProgress[i] += 1;
+          }
         }
-        const remAfter = Math.max(0, next.board.rabbits - m.rabbitsMoved);
-        const canFeed = Math.min(remAfter, Math.floor(next.board.plants / 2));
-        const starved = remAfter - canFeed;
-        if (canFeed > 0) {
-          returnToReserve(next, "plants", canFeed * 2);
-          m.fedRabbits += canFeed;
-          m.rabbitsMoved += canFeed;
+        // Si alguno quedó a 1/2 y ya no hay plantas, igual no completó sus 2 plantas -> muere
+        const fullRabbits = m.rabbitProgress.filter((v) => v >= 2);
+        const starvedCount = m.rabbitProgress.length - fullRabbits.length;
+        if (starvedCount > 0) {
+          returnToReserve(next, "rabbits", starvedCount);
+          if (next.variant === "balanced") m.pendingRemains += starvedCount;
         }
-        if (starved > 0) {
-          returnToReserve(next, "rabbits", starved);
-          if (next.variant === "balanced") m.pendingRemains += starved;
-        }
-        m.rabbitBites = 0;
+        m.rabbitProgress = fullRabbits;
+        m.fedRabbits = fullRabbits.length;
         addLog(
           next,
-          starved > 0
-            ? `🐇 ${m.fedRabbits} conejo(s) se alimentan. 💀 ${starved} muere(n) por falta de plantas.`
-            : `🐇 Todos los conejos (${m.fedRabbits}) comen 2 plantas cada uno.`,
-          starved > 0 ? "warn" : "good"
+          starvedCount > 0
+            ? `🐇 ${fullRabbits.length} conejo(s) comen 2 plantas. 💀 ${starvedCount} muere(n) por falta de plantas.`
+            : `🐇 Cada uno de los ${fullRabbits.length} conejos come sus 2 plantas.`,
+          starvedCount > 0 ? "warn" : "good"
         );
-        if (!checkSustainability(next)) next.phase = "turn_lynx";
+        if (!checkSustainability(next)) enterTurnLynx(next);
         return { state: next };
       }
 
       if (next.board.rabbits === 0) {
-        next.phase = "turn_lynx";
+        enterTurnLynx(next);
         return { state: next };
       }
 
-      const canEatMore = next.board.plants >= 1 && (m.rabbitBites === 1 || next.board.plants >= 2);
-      // Retirar conejo sin comida a la Caja Reserva
+      // Elegir índice de conejo: el arrastrado, o si clicó planta, uno con 1/2 o 0/2
+      let idx =
+        typeof tokenIndex === "number" && tokenIndex >= 0 && tokenIndex < m.rabbitProgress.length
+          ? tokenIndex
+          : m.rabbitProgress.findIndex((v) => v === 1);
+      if (idx === -1) idx = m.rabbitProgress.findIndex((v) => v === 0);
+
+      if (idx === -1) {
+        if (!checkSustainability(next)) enterTurnLynx(next);
+        return { state: next };
+      }
+
+      // ¿Este conejo específico ya comió sus 2 plantas?
+      if (m.rabbitProgress[idx] >= 2) {
+        return {
+          error: `🚫 ¡El conejo #${idx + 1} ya comió sus 2 plantas! Mueve otro conejo que aún tenga hambre.`,
+        };
+      }
+
+      const needForThis = 2 - m.rabbitProgress[idx];
+      const hasEnoughForAny = next.board.plants >= needForThis || (m.rabbitProgress[idx] === 1 && next.board.plants >= 1);
+
+      // Si se arrastra un conejo sin comida posible a la Caja Reserva
       if (targetZone === "reserve" && (!sourceZone || sourceZone === "rabbits")) {
-        if (canEatMore) {
-          return { error: "🌱 ¡Todavía quedan plantas! Arrastra tu conejo sobre las Plantas para alimentarlo." };
+        if (next.board.plants >= 2 || (m.rabbitProgress[idx] === 1 && next.board.plants >= 1)) {
+          return { error: "🌱 ¡Todavía hay plantas para este conejo! Arrástralo sobre una Planta (🌱)." };
         }
         returnToReserve(next, "rabbits", 1);
-        m.rabbitBites = 0;
+        m.rabbitProgress.splice(idx, 1);
         if (next.variant === "balanced") m.pendingRemains += 1;
-        addLog(next, "💀 1 conejo muere por falta de plantas y vuelve a la Reserva.", "warn");
-        if (m.rabbitsMoved >= next.board.rabbits) {
-          if (!checkSustainability(next)) next.phase = "turn_lynx";
+        addLog(next, `💀 1 conejo muere por falta de plantas y vuelve a la Reserva.`, "warn");
+        if (m.rabbitProgress.every((v) => v >= 2)) {
+          if (!checkSustainability(next)) enterTurnLynx(next);
         }
         return { state: next, floater: "💀 -1 🐇" };
       }
@@ -449,67 +476,56 @@
         targetZone === "plants" || (sourceZone === "plants" && targetZone === "reserve");
       if (!validEat) {
         return {
-          error: canEatMore
-            ? "🚫 Los Conejos son herbívoros: ¡arrastra el conejo sobre una Planta (🌱)!"
-            : "💀 No quedan plantas suficientes: arrastra el conejo hambriento a la 📦 Caja Reserva.",
+          error:
+            next.board.plants > 0
+              ? "🚫 Los Conejos son herbívoros: ¡arrastra este conejo sobre una Planta (🌱)!"
+              : "💀 No quedan plantas: arrastra los conejos hambrientos a la 📦 Caja Reserva.",
         };
       }
 
-      if (!canEatMore) {
+      if (next.board.plants === 0) {
         return {
           error: "💀 No quedan plantas suficientes (necesita 2): arrastra los conejos restantes a la 📦 Caja Reserva.",
         };
       }
 
       returnToReserve(next, "plants", 1);
-      m.rabbitBites += 1;
-      let floater = "-1 🌱";
-      if (m.rabbitBites >= 2) {
-        m.rabbitBites = 0;
-        m.fedRabbits += 1;
-        m.rabbitsMoved += 1;
-        floater = "😋 ¡Conejo alimentado!";
-        addLog(next, `🐇 Conejo ${m.rabbitsMoved}/${next.board.rabbits} alimentado (2 plantas).`, "good");
+      m.rabbitProgress[idx] += 1;
+      let floater = `🐇 #${idx + 1}: ${m.rabbitProgress[idx]}/2 🌱`;
+      if (m.rabbitProgress[idx] >= 2) {
+        floater = `✅ Conejo #${idx + 1} lleno (2/2)`;
+        addLog(next, `🐇 El conejo #${idx + 1} ya ha comido sus 2 plantas.`, "good");
       }
 
-      // Si ya comieron todos los conejos, pasar turno
-      if (m.rabbitsMoved >= next.board.rabbits) {
-        if (!checkSustainability(next)) next.phase = "turn_lynx";
+      if (m.rabbitProgress.every((v) => v >= 2)) {
+        if (!checkSustainability(next)) enterTurnLynx(next);
       }
       return { state: next, floater };
     }
 
     if (next.phase === "turn_lynx") {
       if (mode === "all") {
-        if (m.lynxBites === 1 && next.board.rabbits >= 1) {
-          returnToReserve(next, "rabbits", 1);
-          m.pendingRemains += 1;
-          m.fedRabbits = Math.max(0, m.fedRabbits - 1);
-          m.lynxBites = 0;
-          m.fedLynx += 1;
-          m.lynxMoved += 1;
+        for (let i = 0; i < m.lynxProgress.length; i++) {
+          while (m.lynxProgress[i] < 2 && next.board.rabbits > 0) {
+            returnToReserve(next, "rabbits", 1);
+            m.pendingRemains += 1;
+            m.lynxProgress[i] += 1;
+          }
         }
-        const rem = Math.max(0, next.board.lynx - m.lynxMoved);
-        const canHunt = Math.min(rem, Math.floor(next.board.rabbits / 2));
-        const starved = rem - canHunt;
-        if (canHunt > 0) {
-          const hunted = canHunt * 2;
-          returnToReserve(next, "rabbits", hunted);
-          m.pendingRemains += hunted;
-          m.fedRabbits = Math.max(0, m.fedRabbits - hunted);
-          m.fedLynx += canHunt;
-          m.lynxMoved += canHunt;
+        const fullLynx = m.lynxProgress.filter((v) => v >= 2);
+        const starvedCount = m.lynxProgress.length - fullLynx.length;
+        if (starvedCount > 0) {
+          returnToReserve(next, "lynx", starvedCount);
         }
-        if (starved > 0) {
-          returnToReserve(next, "lynx", starved);
-        }
-        m.lynxBites = 0;
+        m.lynxProgress = fullLynx;
+        m.fedLynx = fullLynx.length;
+        m.fedRabbits = next.board.rabbits;
         addLog(
           next,
-          starved > 0
-            ? `🐆 ${m.fedLynx} lince(s) cazan. 💀 ${starved} muere(n) por falta de conejos.`
-            : `🐆 ${m.fedLynx} lince(s) cazan ${m.fedLynx * 2} conejos.`,
-          starved > 0 ? "warn" : "info"
+          starvedCount > 0
+            ? `🐆 ${fullLynx.length} lince(s) cazan. 💀 ${starvedCount} muere(n) por falta de conejos.`
+            : `🐆 Cada lince (${fullLynx.length}) caza sus 2 conejos.`,
+          starvedCount > 0 ? "warn" : "info"
         );
         if (!checkSustainability(next)) next.phase = "turn_remains";
         return { state: next };
@@ -520,15 +536,33 @@
         return { state: next };
       }
 
-      const canHuntMore = next.board.rabbits >= 1 && (m.lynxBites === 1 || next.board.rabbits >= 2);
+      let idx =
+        typeof tokenIndex === "number" && tokenIndex >= 0 && tokenIndex < m.lynxProgress.length
+          ? tokenIndex
+          : m.lynxProgress.findIndex((v) => v === 1);
+      if (idx === -1) idx = m.lynxProgress.findIndex((v) => v === 0);
+
+      if (idx === -1) {
+        if (!checkSustainability(next)) next.phase = "turn_remains";
+        return { state: next };
+      }
+
+      if (m.lynxProgress[idx] >= 2) {
+        return {
+          error: `🚫 ¡El lince #${idx + 1} ya cazó sus 2 conejos! Si hay otro lince, muévelo a él.`,
+        };
+      }
+
       if (targetZone === "reserve" && (!sourceZone || sourceZone === "lynx")) {
-        if (canHuntMore) {
+        if (next.board.rabbits >= 2 || (m.lynxProgress[idx] === 1 && next.board.rabbits >= 1)) {
           return { error: "🐇 ¡Todavía hay conejos! Arrastra el Lince sobre un Conejo para cazar." };
         }
         returnToReserve(next, "lynx", 1);
-        m.lynxBites = 0;
+        m.lynxProgress.splice(idx, 1);
         addLog(next, "💀 1 lince muere por falta de conejos y vuelve a la Reserva.", "warn");
-        if (m.lynxMoved >= next.board.lynx) {
+        if (m.lynxProgress.every((v) => v >= 2)) {
+          m.fedLynx = m.lynxProgress.length;
+          m.fedRabbits = next.board.rabbits;
           if (!checkSustainability(next)) next.phase = "turn_remains";
         }
         return { state: next, floater: "💀 -1 🐆" };
@@ -538,32 +572,30 @@
         targetZone === "rabbits" || (sourceZone === "rabbits" && targetZone === "lynx");
       if (!validHunt) {
         return {
-          error: canHuntMore
-            ? "🚫 El Lince es carnívoro: ¡solo puede cazar Conejos (🐇)!"
-            : "💀 No hay conejos suficientes (necesita 2): arrastra el Lince a la 📦 Caja Reserva.",
+          error:
+            next.board.rabbits > 0
+              ? "🚫 El Lince es carnívoro: ¡solo puede cazar Conejos (🐇)!"
+              : "💀 No hay conejos suficientes: arrastra el Lince a la 📦 Caja Reserva.",
         };
       }
 
-      if (!canHuntMore) {
-        return {
-          error: "💀 No hay conejos suficientes (necesita 2): arrastra el Lince a la 📦 Caja Reserva.",
-        };
+      if (next.board.rabbits === 0) {
+        return { error: "💀 No quedan conejos suficientes (necesita 2): arrastra el Lince a la 📦 Caja Reserva." };
       }
 
       returnToReserve(next, "rabbits", 1);
       m.pendingRemains += 1;
-      m.fedRabbits = Math.max(0, m.fedRabbits - 1);
-      m.lynxBites += 1;
-      let floater = "🦴 Presa cazada (1/2)";
-      if (m.lynxBites >= 2) {
-        m.lynxBites = 0;
-        m.fedLynx += 1;
-        m.lynxMoved += 1;
-        floater = "🐆 ¡Lince alimentado!";
-        addLog(next, `🐆 Lince ${m.lynxMoved}/${next.board.lynx} caza 2 conejos.`, "info");
+      m.lynxProgress[idx] += 1;
+      m.fedRabbits = next.board.rabbits;
+      let floater = `🐆 #${idx + 1}: ${m.lynxProgress[idx]}/2 🐇`;
+      if (m.lynxProgress[idx] >= 2) {
+        floater = `✅ Lince #${idx + 1} lleno (2/2)`;
+        addLog(next, `🐆 El lince #${idx + 1} ya ha cazado sus 2 conejos.`, "info");
       }
 
-      if (m.lynxMoved >= next.board.lynx) {
+      if (m.lynxProgress.every((v) => v >= 2)) {
+        m.fedLynx = m.lynxProgress.length;
+        m.fedRabbits = next.board.rabbits;
         if (!checkSustainability(next)) next.phase = "turn_remains";
       }
       return { state: next, floater };
@@ -589,11 +621,12 @@
     }
 
     if (next.phase === "turn_insects") {
-      if (next.board.insects === 0 || next.board.remains === 0 || m.remainsRecycled >= next.board.insects) {
+      const remainingInsects = m.insectRecycled.filter((done) => !done).length;
+      if (next.board.insects === 0 || next.board.remains === 0 || remainingInsects === 0) {
         if (next.board.remains > 0 && next.board.insects === 0) {
           addLog(next, `🦴 Quedan ${next.board.remains} restos sin reciclar por falta de insectos.`, "warn");
         } else {
-          addLog(next, "🐞 No quedan restos por reciclar.", "info");
+          addLog(next, "🐞 Reciclaje de insectos completado.", "info");
         }
         next.phase = "turn_nutrients";
         return { state: next };
@@ -605,23 +638,52 @@
         return { error: "🚫 Los Insectos descomponedores solo reciclan Restos orgánicos (🦴)." };
       }
 
-      const count =
-        mode === "all"
-          ? Math.min(next.board.insects - m.remainsRecycled, next.board.remains)
-          : 1;
-      returnToReserve(next, "remains", count);
-      m.remainsRecycled += count;
-      m.pendingNutrients += count * 2;
-      addLog(
-        next,
-        `♻️ ${count} insecto(s) descomponen ${count} resto(s) → +${count * 2} nutrientes pendientes para el suelo.`,
-        "good"
-      );
+      if (mode === "all") {
+        let count = 0;
+        for (let i = 0; i < m.insectRecycled.length && next.board.remains > 0; i++) {
+          if (!m.insectRecycled[i]) {
+            m.insectRecycled[i] = true;
+            returnToReserve(next, "remains", 1);
+            m.pendingNutrients += 2;
+            count += 1;
+          }
+        }
+        if (count > 0) {
+          addLog(
+            next,
+            `♻️ ${count} insecto(s) descomponen ${count} resto(s) → +${count * 2} nutrientes pendientes.`,
+            "good"
+          );
+        }
+        next.phase = "turn_nutrients";
+        return { state: next, floater: `+${count * 2} 🪱` };
+      }
 
-      if (m.remainsRecycled >= next.board.insects || next.board.remains === 0) {
+      let idx =
+        typeof tokenIndex === "number" && tokenIndex >= 0 && tokenIndex < m.insectRecycled.length
+          ? tokenIndex
+          : m.insectRecycled.findIndex((done) => !done);
+
+      if (idx === -1) {
+        next.phase = "turn_nutrients";
+        return { state: next };
+      }
+
+      if (m.insectRecycled[idx]) {
+        return {
+          error: `🚫 ¡El insecto #${idx + 1} ya descompuso 1 resto orgánico! Mueve otro insecto.`,
+        };
+      }
+
+      m.insectRecycled[idx] = true;
+      returnToReserve(next, "remains", 1);
+      m.pendingNutrients += 2;
+      addLog(next, `♻️ Insecto #${idx + 1} descompone 1 resto orgánico (+2 nutrientes pendientes).`, "good");
+
+      if (m.insectRecycled.every((done) => done) || next.board.remains === 0) {
         next.phase = "turn_nutrients";
       }
-      return { state: next, floater: `+${count * 2} 🪱 pendientes` };
+      return { state: next, floater: `🐞 #${idx + 1}: +2 🪱` };
     }
 
     if (next.phase === "turn_nutrients") {
@@ -637,7 +699,6 @@
         return { state: next };
       }
 
-      // Paso 1: si hay nutrientes pendientes del reciclaje, arrastrarlos a la zona suelo ('nutrients')
       if (m.pendingNutrients > 0) {
         if (targetZone !== "nutrients") {
           return { error: "🪱 Primero recoge los nutrientes nuevos de la bandeja arrastrándolos a la Zona Suelo." };
@@ -649,14 +710,18 @@
         return { state: next, floater: `+${added} 🪱` };
       }
 
-      // Paso 2: enviar nutrientes de Suelo -> Plantas
       if (targetZone !== "plants") {
         return { error: "🚫 Arrastra 1 Nutriente (🪱) desde el Suelo hasta la Zona Plantas (🌱) para fertilizar." };
       }
       const maxEx = getMaxExchange(next);
+      if (typeof tokenIndex === "number" && tokenIndex < m.nutrientsSentToPlants) {
+        return { error: "🚫 Ese nutriente ya está asignado a Plantas. Arrastra otro nutriente del Suelo." };
+      }
       if (m.nutrientsSentToPlants < maxEx) {
         m.nutrientsSentToPlants += 1;
         addLog(next, `🪱 +1 nutriente enviado a Plantas (${m.nutrientsSentToPlants}/${maxEx}).`, "info");
+      } else {
+        return { error: `🚫 Límite alcanzado: máximo 1 nutriente por cada insecto vivo (${maxEx}).` };
       }
       if (m.nutrientsSentToPlants >= maxEx) {
         enterTurnPlants(next);
@@ -666,7 +731,7 @@
 
     if (next.phase === "turn_plants") {
       if (targetZone !== "plants") {
-        return { error: "🚫 Arrastra las nuevas Plantas (🌱) de la bandeja/Reserva a la Zona Plantas." };
+        return { error: "🚫 Arrastra las nuevas Plantas (🌱) de la bandeja a la Zona Plantas." };
       }
       if (m.plantsToSprout > 0) {
         const count = mode === "all" ? m.plantsToSprout : 1;

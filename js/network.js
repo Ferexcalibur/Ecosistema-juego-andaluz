@@ -424,7 +424,8 @@
             this.state,
             payload.targetZone,
             payload.mode || "one",
-            payload.sourceZone || null
+            payload.sourceZone || null,
+            typeof payload.tokenIndex === "number" ? payload.tokenIndex : null
           );
           if (res.error) {
             this.sendMoveErrorTo(senderId, res.error, payload.targetZone);
