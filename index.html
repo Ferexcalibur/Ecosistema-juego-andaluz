@@ -82,10 +82,7 @@
                 <option value="balanced">Equilibrio sostenible (para notar más la carta de Ronda 3)</option>
               </select>
             </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="create-role-lock" />
-              <span>Cada jugador controla solo su zona asignada</span>
-            </label>
+            <p class="small muted" style="margin:0;">Cada jugador moverá únicamente sus propias fichas. Los roles libres se completan con Bots.</p>
             <button type="submit" class="btn btn-primary btn-lg">Crear Sala y Obtener Código</button>
           </form>
         </article>
@@ -124,6 +121,18 @@
               <select id="local-ecosystem">
                 <option value="donana">Parque Nacional de Doñana</option>
                 <option value="sierra_morena">Sierra Morena (Bosque Mediterráneo)</option>
+              </select>
+            </label>
+            <label>
+              ¿Qué ficha quieres manejar? (el resto serán Bots)
+              <select id="local-role">
+                <option value="lynx">🐆 Lince ibérico</option>
+                <option value="rabbits">🐇 Conejos</option>
+                <option value="insects">🐞 Insectos</option>
+                <option value="plants">🌱 Plantas</option>
+                <option value="nutrients">🪱 Nutrientes (Suelo)</option>
+                <option value="remains">🦴 Restos orgánicos</option>
+                <option value="all">🎓 Controlar todas (Modo Pizarra)</option>
               </select>
             </label>
             <label>
@@ -167,8 +176,8 @@
             🟢 Sala conectada y lista para recibir jugadores
           </div>
 
-          <h3>Elige tu rol en el ecosistema</h3>
-          <p class="muted small">Como en la actividad de aula, cada persona puede encargarse de una zona del tablero:</p>
+          <h3>Elige tu ficha / rol en el ecosistema</h3>
+          <p class="muted small">Cada jugador mueve únicamente las fichas de su especie. Los roles sin jugador se rellenarán automáticamente con Bots:</p>
           <div id="lobby-roles-grid" class="roles-grid"></div>
         </div>
 
@@ -277,14 +286,20 @@
             <!-- Zona 5: Centro circular / Insectos y Restos (Amarillo) -->
             <div class="zone zone-center" data-zone="center">
               <div class="zone-header center-header">
-                <span class="zone-title">🐞 Insectos y Restos 🦴</span>
+                <span class="zone-title">⭕ Zona Central</span>
               </div>
-              <div class="center-counts">
-                <span class="mini-pill pill-yellow">Insectos: <strong id="count-insects">3</strong></span>
-                <span class="mini-pill pill-grey">Restos: <strong id="count-remains">0</strong></span>
+              <div class="center-split">
+                <div class="center-subzone" id="subzone-insects" data-role="insects">
+                  <div class="mini-pill pill-yellow">🐞 Insectos: <strong id="count-insects">3</strong></div>
+                  <div class="tokens-area tokens-center" id="tokens-insects"></div>
+                  <div class="zone-footer center-footer" id="owner-insects"></div>
+                </div>
+                <div class="center-subzone" id="subzone-remains" data-role="remains">
+                  <div class="mini-pill pill-grey">🦴 Restos: <strong id="count-remains">0</strong></div>
+                  <div class="tokens-area tokens-center" id="tokens-remains"></div>
+                  <div class="zone-footer center-footer" id="owner-remains"></div>
+                </div>
               </div>
-              <div class="tokens-area tokens-center" id="tokens-center"></div>
-              <div class="zone-footer center-footer" id="owner-center"></div>
             </div>
           </div>
 
