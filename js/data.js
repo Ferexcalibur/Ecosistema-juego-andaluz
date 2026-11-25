@@ -69,33 +69,39 @@
   EcoGame.ROLES = [
     {
       id: "nutrients",
-      name: "Zona Suelo (Nutrientes)",
+      name: "Nutrientes (Suelo)",
       emoji: "🪱",
-      desc: "Gestiona el suelo y los intercambios de nutrientes marrones.",
+      desc: "Mueve las fichas marrones: recoge nutrientes reciclados y envíalos a las plantas.",
     },
     {
       id: "plants",
-      name: "Zona Plantas (Productores)",
+      name: "Plantas (Productores)",
       emoji: "🌱",
-      desc: "Cuida las plantas verdes, base alimentaria del ecosistema.",
+      desc: "Mueve las fichas verdes: hace brotar nuevas plantas con los nutrientes recibidos.",
     },
     {
       id: "rabbits",
-      name: "Zona Conejos (Herbívoros)",
+      name: "Conejos (Herbívoros)",
       emoji: "🐇",
-      desc: "Controla la alimentación y cría de los conejos blancos.",
+      desc: "Mueve las fichas blancas: solo puede alimentarse de plantas.",
     },
     {
       id: "lynx",
-      name: "Zona Lince (Depredadores)",
+      name: "Lince ibérico (Depredador)",
       emoji: "🐆",
-      desc: "Dirige la caza y reproducción del lince ibérico naranja.",
+      desc: "Mueve las fichas naranjas: solo puede cazar conejos.",
     },
     {
-      id: "center",
-      name: "Zona Centro (Insectos y Restos)",
+      id: "insects",
+      name: "Insectos (Descomponedores)",
       emoji: "🐞",
-      desc: "Coordina descomposición, polinización y restos orgánicos.",
+      desc: "Mueve las fichas amarillas: sobrevive con plantas y solo recicla restos orgánicos.",
+    },
+    {
+      id: "remains",
+      name: "Restos orgánicos",
+      emoji: "🦴",
+      desc: "Mueve las fichas grises al centro tras la caza para que los insectos las reciclen.",
     },
   ];
 
@@ -147,13 +153,13 @@
 
   EcoGame.PHASES = [
     { id: "card", label: "Carta", short: "🃏 Carta" },
-    { id: "predict", label: "Predicción", short: "🔮 Predicción" },
-    { id: "feed_rabbits", label: "Conejos comen", short: "1a. Conejos" },
-    { id: "feed_lynx", label: "Lince caza", short: "1b. Lince" },
-    { id: "feed_insects", label: "Insectos viven", short: "1c. Insectos" },
-    { id: "recycle", label: "Reciclaje", short: "2. Reciclaje" },
-    { id: "growth_exchange", label: "Intercambio", short: "3a. Plantar" },
-    { id: "growth_repro", label: "Nacimientos", short: "3b. Cría" },
+    { id: "predict", label: "Predicción", short: "🔮 Inicio" },
+    { id: "turn_rabbits", label: "Turno Conejos", short: "🐇 Conejos" },
+    { id: "turn_lynx", label: "Turno Lince", short: "🐆 Lince" },
+    { id: "turn_remains", label: "Turno Restos", short: "🦴 Restos" },
+    { id: "turn_insects", label: "Turno Insectos", short: "🐞 Insectos" },
+    { id: "turn_nutrients", label: "Turno Nutrientes", short: "🪱 Nutrientes" },
+    { id: "turn_plants", label: "Turno Plantas", short: "🌱 Plantas" },
     { id: "round_end", label: "Registro", short: "📋 Registro" },
   ];
 

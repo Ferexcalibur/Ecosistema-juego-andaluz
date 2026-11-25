@@ -19,7 +19,7 @@
     box.appendChild(el);
     setTimeout(() => {
       el.remove();
-    }, 3200);
+    }, 3400);
   }
 
   function showScreen(screenId) {
@@ -27,50 +27,109 @@
     $(screenId).classList.add("active");
   }
 
-  let exchangeSliderVal = 0;
   let lastSeenChatCount = 0;
   let lastPendingCardKey = null;
+  let boardListenersBound = false;
 
-  function renderTokens(containerId, count, cssClass, emoji, emojisPool = null) {
-    const el = $(containerId);
-    el.innerHTML = "";
-    const capped = Math.min(count, 32);
-    for (let i = 0; i < capped; i++) {
-      const chip = document.createElement("span");
-      chip.className = `token-chip ${cssClass}`;
-      chip.textContent = emojisPool ? emojisPool[i % emojisPool.length] : emoji;
-      el.appendChild(chip);
-    }
-    if (count > 32) {
-      const extra = document.createElement("span");
-      extra.className = "mini-pill pill-yellow";
-      extra.textContent = `+${count - 32}`;
-      el.appendChild(extra);
-    }
+  const VALID_TARGETS = {
+    turn_rabbits: "plants",
+    turn_lynx: "rabbits",
+    turn_remains: "remains",
+    turn_insects: "remains",
+    turn_nutrients: "plants",
+    turn_plants: "plants",
+  };
+
+  function bindBoardInteractions() {
+    if (boardListenersBound) return;
+    boardListenersBound = true;
+
+    const getZoneKeyFromEl = (el) => {
+      const sub = el.closest(".center-subzone");
+      if (sub && sub.dataset.role) return sub.dataset.role;
+      const z = el.closest(".zone[data-zone]");
+      if (!z) return null;
+      return z.dataset.zone === "center" ? "remains" : z.dataset.zone;
+    };
+
+    const board = $("ecosystem-board");
+
+    board.addEventListener("click", (e) => {
+      const state = EcoGame.room.state;
+      if (!state || state.status !== "playing") return;
+      const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
+      if (!activeRole) return;
+      if (!EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase)) {
+        const owner = EcoGame.engine.getTurnOwner(state);
+        if (owner) {
+          showToast(
+            owner.isBot
+              ? `🤖 Turno automático de ${owner.name}...`
+              : `⏳ Es el turno de ${owner.name}. Solo él/ella mueve sus fichas.`
+          );
+        }
+        return;
+      }
+
+      const targetZone = getZoneKeyFromEl(e.target);
+      if (!targetZone) return;
+      EcoGame.sound.playPop();
+      EcoGame.room.dispatchGameAction("PERFORM_MOVE", { targetZone, mode: "one" });
+    });
+
+    // Drag-and-drop también disponible además de clic directo
+    board.addEventListener("dragstart", (e) => {
+      const chip = e.target.closest(".token-chip[data-role]");
+      if (!chip) return;
+      e.dataTransfer.setData("text/plain", chip.dataset.role);
+    });
+
+    board.addEventListener("dragover", (e) => {
+      const state = EcoGame.room.state;
+      if (!state || !EcoGame.engine.getActivePhaseRole(state.phase)) return;
+      e.preventDefault();
+    });
+
+    board.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const state = EcoGame.room.state;
+      if (!state || state.status !== "playing") return;
+      if (!EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase)) return;
+      const targetZone = getZoneKeyFromEl(e.target);
+      if (!targetZone) return;
+      EcoGame.sound.playPop();
+      EcoGame.room.dispatchGameAction("PERFORM_MOVE", { targetZone, mode: "one" });
+    });
   }
 
-  function renderCenterTokens(insects, remains) {
-    const el = $("tokens-center");
+  function shakeZone(zoneKey) {
+    if (!zoneKey) return;
+    const el =
+      zoneKey === "insects" || zoneKey === "remains"
+        ? $(`subzone-${zoneKey}`)
+        : document.querySelector(`.zone[data-zone="${zoneKey}"]`);
+    if (!el) return;
+    el.classList.remove("zone-shake");
+    void el.offsetWidth;
+    el.classList.add("zone-shake");
+  }
+
+  function renderTokens(containerId, count, cssClass, emoji, roleKey, isMyTurn, emojisPool = null) {
+    const el = $(containerId);
     el.innerHTML = "";
-    const insEmojis = EcoGame.SPECIES.insects.emojis;
-    for (let i = 0; i < Math.min(insects, 10); i++) {
+    const capped = Math.min(count, 28);
+    for (let i = 0; i < capped; i++) {
       const chip = document.createElement("span");
-      chip.className = "token-chip token-insects";
-      chip.textContent = insEmojis[i % insEmojis.length];
-      chip.title = "Insecto (ficha amarilla)";
+      chip.className = `token-chip ${cssClass} ${isMyTurn ? "token-draggable" : ""}`;
+      chip.textContent = emojisPool ? emojisPool[i % emojisPool.length] : emoji;
+      chip.dataset.role = roleKey;
+      chip.draggable = isMyTurn;
       el.appendChild(chip);
     }
-    for (let i = 0; i < Math.min(remains, 12); i++) {
-      const chip = document.createElement("span");
-      chip.className = "token-chip token-remains";
-      chip.textContent = "🦴";
-      chip.title = "Resto orgánico (ficha gris)";
-      el.appendChild(chip);
-    }
-    if (remains > 12) {
+    if (count > 28) {
       const extra = document.createElement("span");
-      extra.className = "mini-pill pill-grey";
-      extra.textContent = `+${remains - 12} restos`;
+      extra.className = "mini-pill pill-yellow";
+      extra.textContent = `+${count - 28}`;
       el.appendChild(extra);
     }
   }
@@ -92,33 +151,35 @@
     const rolesGrid = $("lobby-roles-grid");
     rolesGrid.innerHTML = "";
     EcoGame.ROLES.forEach((role) => {
-      const occupants = state.players.filter((p) => p.role === role.id).map((p) => p.name);
+      const occupant = state.players.find((p) => !p.isBot && p.role === role.id);
+      const isMine = myRole === role.id;
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `role-btn ${myRole === role.id ? "selected" : ""}`;
+      btn.className = `role-btn ${isMine ? "selected" : ""}`;
       btn.innerHTML = `
         <div class="role-btn-title">
           <span>${role.emoji} ${role.name}</span>
-          ${myRole === role.id ? "<span>✅</span>" : ""}
+          ${isMine ? "<span>✅</span>" : ""}
         </div>
         <div class="role-btn-desc">${role.desc}</div>
         ${
-          occupants.length > 0
-            ? `<div class="role-occupant">A cargo: ${escapeHtml(occupants.join(", "))}</div>`
-            : `<div class="role-occupant muted">Sin asignar</div>`
+          occupant
+            ? `<div class="role-occupant">Jugador: ${escapeHtml(occupant.name)}</div>`
+            : `<div class="role-occupant muted">🤖 Se rellenará con Bot</div>`
         }
       `;
       btn.addEventListener("click", () => {
         EcoGame.sound.playPop();
-        EcoGame.room.dispatch("SELECT_ROLE", { role: myRole === role.id ? null : role.id });
+        EcoGame.room.dispatch("SELECT_ROLE", { role: isMine ? null : role.id });
       });
       rolesGrid.appendChild(btn);
     });
 
     const pList = $("lobby-player-list");
     pList.innerHTML = "";
-    $("lobby-player-count").textContent = state.players.length;
-    state.players.forEach((p) => {
+    const humans = state.players.filter((p) => !p.isBot);
+    $("lobby-player-count").textContent = humans.length;
+    humans.forEach((p) => {
       const roleObj = EcoGame.ROLES.find((r) => r.id === p.role);
       const li = document.createElement("li");
       li.className = "player-item";
@@ -128,7 +189,7 @@
           <span>${escapeHtml(p.name)}</span>
           ${p.isHost ? '<span class="host-tag">Anfitrión</span>' : ""}
         </div>
-        <span class="badge-pill badge-outline">${roleObj ? roleObj.name : "Sin zona"}</span>
+        <span class="badge-pill badge-outline">${roleObj ? roleObj.name : "Sin ficha"}</span>
       `;
       pList.appendChild(li);
     });
@@ -227,6 +288,7 @@
   }
 
   function renderGame(state) {
+    bindBoardInteractions();
     showScreen("screen-game");
 
     const eco = EcoGame.ECOSYSTEMS[state.ecosystem] || EcoGame.ECOSYSTEMS.donana;
@@ -235,11 +297,11 @@
 
     const me = EcoGame.room.getMyPlayer();
     const myRoleObj = me && me.role ? EcoGame.ROLES.find((r) => r.id === me.role) : null;
-    $("hud-my-role").textContent = myRoleObj
-      ? `Tu rol: ${myRoleObj.emoji} ${myRoleObj.name}`
-      : EcoGame.room.mode === "local"
-      ? "Modo un dispositivo"
-      : "Rol libre (sin zona fija)";
+    $("hud-my-role").textContent = state.controlAll
+      ? "🎓 Modo Pizarra (todas las fichas)"
+      : myRoleObj
+      ? `Tu ficha: ${myRoleObj.emoji} ${myRoleObj.name}`
+      : "Observador";
 
     if (state.roomCode) {
       $("topbar-room-pill").classList.remove("hidden");
@@ -275,7 +337,7 @@
       banner.classList.add("hidden");
     }
 
-    // Tablero 5 zonas
+    // Tablero 5 zonas (con 6 roles diferenciados)
     const b = state.board;
     $("count-nutrients").textContent = b.nutrients;
     $("count-plants").textContent = b.plants;
@@ -284,21 +346,34 @@
     $("count-insects").textContent = b.insects;
     $("count-remains").textContent = b.remains;
 
-    renderTokens("tokens-nutrients", b.nutrients, "token-nutrients", "🪱");
-    renderTokens("tokens-plants", b.plants, "token-plants", "🌱");
-    renderTokens("tokens-rabbits", b.rabbits, "token-rabbits", "🐇");
-    renderTokens("tokens-lynx", b.lynx, "token-lynx", "🐆");
-    renderCenterTokens(b.insects, b.remains);
+    const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
+    const canAct = EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase);
+    const targetZone = VALID_TARGETS[state.phase] || null;
 
-    // Propietarios de zonas y resaltado activo
-    const activeZone = EcoGame.engine.getActivePhaseRole(state.phase);
-    document.querySelectorAll(".zone").forEach((z) => {
-      const zName = z.getAttribute("data-zone");
-      z.classList.toggle("highlight-active", activeZone === zName);
-      const owners = state.players.filter((p) => p.role === zName).map((p) => p.name);
-      const footerEl = $(`owner-${zName}`);
+    renderTokens("tokens-nutrients", b.nutrients, "token-nutrients", "🪱", "nutrients", canAct && activeRole === "nutrients");
+    renderTokens("tokens-plants", b.plants, "token-plants", "🌱", "plants", canAct && activeRole === "plants");
+    renderTokens("tokens-rabbits", b.rabbits, "token-rabbits", "🐇", "rabbits", canAct && activeRole === "rabbits");
+    renderTokens("tokens-lynx", b.lynx, "token-lynx", "🐆", "lynx", canAct && activeRole === "lynx");
+    renderTokens("tokens-insects", b.insects, "token-insects", "🐞", "insects", canAct && activeRole === "insects", EcoGame.SPECIES.insects.emojis);
+    renderTokens("tokens-remains", b.remains, "token-remains", "🦴", "remains", canAct && activeRole === "remains");
+
+    // Resaltado de propietario activo y objetivo válido
+    const allZones = ["nutrients", "plants", "rabbits", "lynx", "insects", "remains"];
+    allZones.forEach((roleId) => {
+      const el =
+        roleId === "insects" || roleId === "remains"
+          ? $(`subzone-${roleId}`)
+          : document.querySelector(`.zone[data-zone="${roleId}"]`);
+      if (!el) return;
+      el.classList.toggle("zone-owner-turn", activeRole === roleId);
+      el.classList.toggle("zone-valid-target", canAct && targetZone === roleId);
+
+      const owner = state.players.find((p) => p.role === roleId);
+      const footerEl = $(`owner-${roleId}`);
       if (footerEl) {
-        footerEl.textContent = owners.length ? `Encargado/a: ${owners.join(", ")}` : "";
+        footerEl.textContent = owner
+          ? `${owner.isBot ? "🤖 " : "👤 "}${owner.name}`
+          : "Sin asignar";
       }
     });
 
@@ -367,7 +442,7 @@
     });
     renderChart($("chart-container"), state.history);
 
-    // Chat + badge de mensajes sin leer
+    // Chat
     renderChat($("game-chat-messages"), state.chat);
     const chatTabActive = document.querySelector('.side-tab[data-tab="chat"]').classList.contains("active");
     if (chatTabActive) {
@@ -382,28 +457,22 @@
   function renderPhaseAction(state) {
     const box = $("phase-action-card");
     const b = state.board;
+    const m = state.roundMeta;
     const canAct = EcoGame.room.canPlayerAct(EcoGame.room.myId, state.phase);
-    const neededRole = EcoGame.engine.getActivePhaseRole(state.phase);
-    const neededRoleObj = EcoGame.ROLES.find((r) => r.id === neededRole);
-
-    const roleLockNote =
-      !canAct && neededRoleObj
-        ? `<div class="role-notice">⏳ Turno de: <strong>${neededRoleObj.emoji} ${neededRoleObj.name}</strong> (esperando su acción).</div>`
-        : "";
+    const turnOwner = EcoGame.engine.getTurnOwner(state);
+    const activeRole = EcoGame.engine.getActivePhaseRole(state.phase);
+    const activeRoleObj = EcoGame.ROLES.find((r) => r.id === activeRole);
 
     if (state.phase === "card") {
       box.innerHTML = `
         <span class="phase-badge">Inicio de Ronda ${state.round} · Carta del Ecosistema</span>
         <h3>🃏 ¡Robar carta especial!</h3>
-        <p>Como indica el documento en la Ronda 3, un cambio inesperado altera el ecosistema. Robad una carta para ver qué ocurre.</p>
+        <p>En la Ronda 3 robamos una carta que altera el ecosistema para observar el efecto dominó.</p>
         <button id="btn-draw-card" class="btn btn-accent btn-lg full-width" ${canAct ? "" : "disabled"}>
           🎲 Robar Carta del Ecosistema
         </button>
-        ${roleLockNote}
       `;
-      $("btn-draw-card").addEventListener("click", () => {
-        EcoGame.room.dispatchGameAction("DRAW_CARD");
-      });
+      $("btn-draw-card").addEventListener("click", () => EcoGame.room.dispatchGameAction("DRAW_CARD"));
       return;
     }
 
@@ -411,15 +480,14 @@
       const myPred = state.predictions[EcoGame.room.myId]?.choice || null;
       const votes = Object.values(state.predictions);
       const predLabels = {
-        up: "📈 Suben los animales",
-        stable: "⚖️ Se mantiene",
-        down: "📉 Bajan / falta comida",
-        collapse: "⚠️ Efecto dominó",
+        up: "📈 Suben",
+        stable: "⚖️ Igual",
+        down: "📉 Bajan",
+        collapse: "⚠️ Colapso",
       };
       box.innerHTML = `
-        <span class="phase-badge">Antes de mover fichas · Pensamiento Sistémico</span>
-        <h3>🔮 ¿Qué creéis que pasará en la Ronda ${state.round}?</h3>
-        <p class="small muted">Comentad y votad vuestra hipótesis antes de iniciar la alimentación:</p>
+        <span class="phase-badge">Ronda ${state.round} · Antes de mover fichas</span>
+        <h3>🔮 ¿Qué creéis que pasará esta ronda?</h3>
         <div class="prediction-buttons">
           ${Object.entries(predLabels)
             .map(
@@ -430,15 +498,14 @@
         </div>
         ${
           votes.length > 0
-            ? `<div class="rule-preview"><strong>Hipótesis del equipo:</strong> ${votes
+            ? `<div class="rule-preview">${votes
                 .map((v) => `${escapeHtml(v.name)}: ${predLabels[v.choice]}`)
                 .join(" · ")}</div>`
             : ""
         }
         <button id="btn-start-feed" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          ➡️ Empezar Fase 1: Alimentación
+          ➡️ Empezar Turnos (1º Conejos)
         </button>
-        ${roleLockNote}
       `;
       box.querySelectorAll(".pred-btn").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -453,166 +520,76 @@
       return;
     }
 
-    if (state.phase === "feed_rabbits") {
-      const need = b.rabbits * 2;
-      const canFeed = Math.min(b.rabbits, Math.floor(b.plants / 2));
-      const starved = b.rabbits - canFeed;
-      box.innerHTML = `
-        <span class="phase-badge">Fase 1 · Alimentación (Herbívoros)</span>
-        <h3>🐇 Los conejos comen plantas</h3>
-        <div class="rule-preview">
-          <strong>Regla:</strong> 1 conejo come <strong>2 plantas</strong> (van a la caja). Si no hay suficiente comida, muere.<br>
-          <strong>Previsión:</strong> Hay <strong>${b.rabbits} conejos</strong> (necesitan ${need} plantas) y hay <strong>${b.plants} plantas</strong>.
-          ${starved > 0 ? `<br>⚠️ Morirán <strong>${starved}</strong> conejo(s).` : ""}
-        </div>
-        <button id="btn-feed-rabbits" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          🌱 Alimentar a los Conejos
-        </button>
-        ${roleLockNote}
-      `;
-      $("btn-feed-rabbits").addEventListener("click", () => {
-        starved > 0 ? EcoGame.sound.playWarn() : EcoGame.sound.playPop();
-        EcoGame.room.dispatchGameAction("FEED_RABBITS");
-      });
-      return;
-    }
+    if (activeRole) {
+      const isBotTurn = turnOwner && turnOwner.isBot;
+      const ownerLabel = turnOwner ? `${turnOwner.isBot ? "🤖 " : "👤 "}${escapeHtml(turnOwner.name)}` : "Encargado";
 
-    if (state.phase === "feed_lynx") {
-      const need = b.lynx * 2;
-      const canFeed = Math.min(b.lynx, Math.floor(b.rabbits / 2));
-      const starved = b.lynx - canFeed;
-      box.innerHTML = `
-        <span class="phase-badge">Fase 1 · Alimentación (Depredadores)</span>
-        <h3>🐆 El lince ibérico caza conejos</h3>
-        <div class="rule-preview">
-          <strong>Regla:</strong> 1 lince come <strong>2 conejos</strong>. Los conejos cazados no desaparecen: pasan al centro como <strong>fichas grises (restos orgánicos)</strong>.<br>
-          <strong>Previsión:</strong> Hay <strong>${b.lynx} lince(s)</strong> (necesitan ${need} conejos) y quedan <strong>${b.rabbits} conejos</strong>.
-          ${starved > 0 ? `<br>⚠️ Morirá <strong>${starved}</strong> lince(s) por falta de presas.` : ""}
-        </div>
-        <button id="btn-feed-lynx" class="btn btn-accent btn-lg full-width" ${canAct ? "" : "disabled"}>
-          🦴 Cazar y dejar Restos Orgánicos
-        </button>
-        ${roleLockNote}
-      `;
-      $("btn-feed-lynx").addEventListener("click", () => {
-        starved > 0 ? EcoGame.sound.playWarn() : EcoGame.sound.playPop();
-        EcoGame.room.dispatchGameAction("FEED_LYNX");
-      });
-      return;
-    }
+      let title = "";
+      let instruction = "";
+      let targetKey = VALID_TARGETS[state.phase];
+      let actionBtnLabel = "⚡ Completar movimiento y pasar turno";
 
-    if (state.phase === "feed_insects") {
-      const refPlants = state.roundMeta.plantsAtFeedStart;
-      const supported = Math.min(b.insects, Math.floor(refPlants / 3));
-      const died = b.insects - supported;
-      box.innerHTML = `
-        <span class="phase-badge">Fase 1 · Alimentación (Insectos)</span>
-        <h3>🐞 Supervivencia de los insectos</h3>
-        <div class="rule-preview">
-          <strong>Regla:</strong> 1 insecto necesita al menos <strong>3 plantas</strong> para vivir (no las elimina).<br>
-          <strong>Previsión:</strong> Al inicio de la fase había <strong>${refPlants} plantas</strong> y hay <strong>${b.insects} insectos</strong>. Sobrevivirán <strong>${supported}</strong>${died > 0 ? ` (mueren ${died})` : ""}.
-        </div>
-        <button id="btn-feed-insects" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          🐞 Comprobar Insectos
-        </button>
-        ${roleLockNote}
-      `;
-      $("btn-feed-insects").addEventListener("click", () => {
-        died > 0 ? EcoGame.sound.playWarn() : EcoGame.sound.playGood();
-        EcoGame.room.dispatchGameAction("FEED_INSECTS");
-      });
-      return;
-    }
+      if (state.phase === "turn_rabbits") {
+        title = "🐇 Turno de Conejos";
+        instruction = `<strong>Progreso:</strong> ${m.rabbitsMoved}/${b.rabbits} conejos movidos (2 🌱 por conejo).<br>👉 Haz clic en las <strong>Plantas (🌱)</strong> o arrastra un conejo allí. <em>Solo puedes comer plantas.</em>`;
+        actionBtnLabel = "⚡ Alimentar todos y pasar a Lince";
+      } else if (state.phase === "turn_lynx") {
+        title = "🐆 Turno de Lince Ibérico";
+        instruction = `<strong>Progreso:</strong> ${m.lynxMoved}/${b.lynx} lince(s) movidos (2 🐇 por lince).<br>👉 Haz clic en los <strong>Conejos (🐇)</strong> o arrastra el lince allí. <em>Solo puedes cazar conejos.</em>`;
+        actionBtnLabel = "⚡ Cazar y pasar a Restos orgánicos";
+      } else if (state.phase === "turn_remains") {
+        title = "🦴 Turno de Restos Orgánicos";
+        instruction =
+          m.pendingRemains > 0
+            ? `Hay <strong>${m.pendingRemains} conejo(s) cazados</strong>.<br>👉 Haz clic en <strong>🦴 Restos</strong> en el círculo central para colocar las fichas grises.`
+            : "No hay nuevos restos orgánicos en esta ronda.<br>👉 Pulsa para pasar el turno a <strong>🐞 Insectos</strong>.";
+        actionBtnLabel = m.pendingRemains > 0 ? "🦴 Colocar Restos y pasar a Insectos" : "➡️ Pasar turno a Insectos";
+      } else if (state.phase === "turn_insects") {
+        const leftToRecycle = Math.min(b.insects - m.remainsRecycled, b.remains);
+        title = "🐞 Turno de Insectos";
+        instruction =
+          leftToRecycle > 0
+            ? `<strong>Reciclados:</strong> ${m.remainsRecycled}/${b.insects} (quedan ${b.remains} restos).<br>👉 Haz clic en <strong>🦴 Restos</strong> para descomponer 1 resto (+2 nutrientes).`
+            : `No hay restos que reciclar (quedan ${b.remains} restos y ${b.insects} insectos).<br>👉 Pasa el turno a <strong>🪱 Nutrientes</strong>.`;
+        actionBtnLabel = leftToRecycle > 0 ? "♻️ Reciclar todo y pasar a Nutrientes" : "➡️ Pasar turno a Nutrientes";
+      } else if (state.phase === "turn_nutrients") {
+        const maxEx = EcoGame.engine.getMaxExchange(state);
+        title = "🪱 Turno de Nutrientes";
+        instruction = `<strong>Preparados para plantar:</strong> ${m.nutrientsSentToPlants} / ${maxEx} (máx. 1 por insecto vivo).<br>👉 Haz clic en <strong>🌱 Plantas</strong> para enviar 1 nutriente y luego pulsa Pasar turno.`;
+        actionBtnLabel = "✅ Pasar turno a Plantas";
+      } else if (state.phase === "turn_plants") {
+        const plantYield = state.variant === "balanced" ? m.nutrientsSentToPlants * 2 : m.nutrientsSentToPlants;
+        title = "🌱 Turno de Plantas";
+        instruction = `Nutrientes recibidos: <strong>${m.nutrientsSentToPlants}</strong> (brotarán <strong>+${plantYield} plantas</strong>${
+          state.variant === "balanced" && b.plants > 0 && b.insects > 0 ? " +2 por polinización" : ""
+        }).<br>👉 Haz clic en <strong>🌱 Plantas</strong> para hacerlas brotar y calcular nacimientos.`;
+        actionBtnLabel = "🌱 Hacer brotar y cerrar ronda";
+      }
 
-    if (state.phase === "recycle") {
-      const processed = Math.min(b.insects, b.remains);
       box.innerHTML = `
-        <span class="phase-badge">Fase 2 · Reciclaje y Descomposición</span>
-        <h3>♻️ Los descomponedores reciclan restos</h3>
-        <div class="rule-preview">
-          <strong>Regla:</strong> 1 insecto come <strong>1 resto orgánico</strong> (ficha gris) y lo transforma en <strong>2 nutrientes</strong> (fichas marrones).<br>
-          <strong>Previsión:</strong> Con ${b.insects} insecto(s) y ${b.remains} resto(s), se reciclarán <strong>${processed}</strong> resto(s) → <strong>+${processed * 2} nutrientes</strong> (según reserva).
-        </div>
-        <button id="btn-recycle" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          🪱 Descomponer Restos en Nutrientes
-        </button>
-        ${roleLockNote}
+        <span class="phase-badge">${activeRoleObj ? activeRoleObj.emoji + " " + activeRoleObj.name : ""} · ${ownerLabel}</span>
+        <h3>${title}</h3>
+        <div class="rule-preview">${instruction}</div>
+        ${
+          isBotTurn
+            ? `<div class="role-notice">🤖 <strong>${ownerLabel}</strong> está realizando su movimiento...</div>`
+            : canAct
+            ? `<button id="btn-pass-or-complete" class="btn btn-primary btn-lg full-width">${actionBtnLabel}</button>`
+            : `<div class="role-notice">⏳ Esperando a que <strong>${ownerLabel}</strong> mueva sus fichas en el tablero.</div>`
+        }
       `;
-      $("btn-recycle").addEventListener("click", () => {
-        EcoGame.sound.playGood();
-        EcoGame.room.dispatchGameAction("RECYCLE");
-      });
-      return;
-    }
 
-    if (state.phase === "growth_exchange") {
-      const maxEx = EcoGame.engine.getMaxExchange(state);
-      if (exchangeSliderVal > maxEx) exchangeSliderVal = maxEx;
-      if (exchangeSliderVal === 0 && maxEx > 0) exchangeSliderVal = maxEx;
-      const plantPerEx = state.variant === "balanced" ? 2 : 1;
-      box.innerHTML = `
-        <span class="phase-badge">Fase 3 · Crecimiento (Intercambio)</span>
-        <h3>🌱 Transformar nutrientes en plantas</h3>
-        <div class="rule-preview">
-          <strong>Regla:</strong> Por cada insecto vivo (${b.insects}) se puede intercambiar <strong>1 nutriente</strong> por <strong>${plantPerEx} planta(s)</strong> de la Reserva.<br>
-          <strong>Máximo posible ahora:</strong> ${maxEx} intercambio(s).
-        </div>
-        <div class="exchange-control">
-          <div>
-            <strong>Intercambiar:</strong><br>
-            <small>${exchangeSliderVal} 🪱 → +${exchangeSliderVal * plantPerEx} 🌱</small>
-          </div>
-          <div class="stepper-ctrl">
-            <button type="button" id="ex-minus" ${canAct ? "" : "disabled"}>−</button>
-            <span id="ex-val">${exchangeSliderVal}</span>
-            <button type="button" id="ex-plus" ${canAct ? "" : "disabled"}>+</button>
-          </div>
-        </div>
-        <button id="btn-exchange" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          ✅ Confirmar Intercambio
-        </button>
-        ${roleLockNote}
-      `;
-      $("ex-minus").addEventListener("click", () => {
-        exchangeSliderVal = Math.max(0, exchangeSliderVal - 1);
-        renderPhaseAction(state);
-      });
-      $("ex-plus").addEventListener("click", () => {
-        exchangeSliderVal = Math.min(maxEx, exchangeSliderVal + 1);
-        renderPhaseAction(state);
-      });
-      $("btn-exchange").addEventListener("click", () => {
-        EcoGame.sound.playGood();
-        EcoGame.room.dispatchGameAction("GROWTH_EXCHANGE", { count: exchangeSliderVal });
-        exchangeSliderVal = 0;
-      });
-      return;
-    }
-
-    if (state.phase === "growth_repro") {
-      const newR = Math.floor(state.roundMeta.fedRabbits / 2);
-      const newL = Math.min(Math.floor(state.roundMeta.fedLynx / 2), Math.floor(state.roundMeta.fedRabbits / 4));
-      const newI =
-        state.noInsectsRoundsLeft === 0 && b.insects >= 1
-          ? Math.min(Math.floor(b.plants / 8), Math.max(0, 5 - b.insects))
-          : 0;
-      box.innerHTML = `
-        <span class="phase-badge">Fase 3 · Crecimiento (Reproducción)</span>
-        <h3>🐣 Nacimientos del ecosistema</h3>
-        <div class="rule-preview">
-          • 🐇 +1 conejo por cada 2 conejos bien alimentados → <strong>+${newR}</strong><br>
-          • 🐆 +1 lince por cada 2 linces y 4 conejos bien alimentados → <strong>+${newL}</strong><br>
-          • 🐞 +1 insecto por cada 8 plantas y 1 insecto (máx. 5) → <strong>+${newI}</strong>
-        </div>
-        <button id="btn-repro" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
-          🐣 Aplicar Nacimientos y Registrar Ronda
-        </button>
-        ${roleLockNote}
-      `;
-      $("btn-repro").addEventListener("click", () => {
-        EcoGame.sound.playGood();
-        EcoGame.room.dispatchGameAction("GROWTH_REPRO");
-      });
+      const passBtn = $("btn-pass-or-complete");
+      if (passBtn) {
+        passBtn.addEventListener("click", () => {
+          EcoGame.sound.playPop();
+          if (state.phase === "turn_nutrients") {
+            EcoGame.room.dispatchGameAction("PASS_TURN");
+          } else {
+            EcoGame.room.dispatchGameAction("PERFORM_MOVE", { targetZone: targetKey, mode: "all" });
+          }
+        });
+      }
       return;
     }
 
@@ -620,8 +597,8 @@
       const isLast = state.round >= state.maxRounds;
       box.innerHTML = `
         <span class="phase-badge">Fin de Ronda ${state.round} · Tabla de Registro</span>
-        <h3>📋 ¡Datos guardados en la tabla!</h3>
-        <p class="small">Revisa la pestaña <strong>Registro y Gráfica</strong> para ver cómo cambian las especies ronda a ronda.</p>
+        <h3>📋 ¡Ronda completada!</h3>
+        <p class="small">Los datos de todas las especies se han anotado en la tabla y la gráfica.</p>
         <div style="display:flex; flex-direction:column; gap:0.55rem;">
           <button id="btn-next-round" class="btn btn-primary btn-lg full-width" ${canAct ? "" : "disabled"}>
             ${isLast ? "🏁 Ver Puesta en Común Final" : `➡️ Pasar a Ronda ${state.round + 1}`}
@@ -634,7 +611,6 @@
               : ""
           }
         </div>
-        ${roleLockNote}
       `;
       $("btn-next-round").addEventListener("click", () => {
         EcoGame.sound.playPop();
@@ -653,11 +629,14 @@
   function renderSummary(state) {
     showScreen("screen-summary");
     const analysis = EcoGame.engine.analyzeEcosystem(state);
-    $("summary-title").textContent = analysis.collapsed
+    $("summary-title").textContent = state.collapsed
+      ? "💀 Ecosistema insostenible: todo ha muerto"
+      : analysis.collapsed
       ? "El ecosistema sufrió un desequilibrio"
       : "¡El ecosistema mantuvo su equilibrio dinámico!";
-    $("summary-subtitle").textContent =
-      "Observad la gráfica de evolución y poned en común por qué ha ocurrido cada cambio en la red trófica.";
+    $("summary-subtitle").textContent = state.collapsed
+      ? state.collapseReason
+      : "Observad la gráfica de evolución y poned en común por qué ha ocurrido cada cambio en la red trófica.";
 
     renderChart($("summary-chart"), state.history);
 
@@ -679,7 +658,6 @@
       insList.appendChild(li);
     });
 
-    // Comprobación del aprendizaje (Quiz Noticia Real)
     const quizBox = $("quiz-container");
     quizBox.innerHTML = "";
     EcoGame.QUIZ_CASES.forEach((q) => {
@@ -721,6 +699,7 @@
   EcoGame.ui = {
     showScreen,
     showToast,
+    shakeZone,
     renderLobby,
     renderGame,
     renderSummary,

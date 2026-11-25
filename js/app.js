@@ -52,6 +52,11 @@
         EcoGame.ui.setJoinStatus(errMsg, true);
         EcoGame.ui.showToast(errMsg);
       },
+      onMoveError: (errMsg, targetZone) => {
+        EcoGame.sound.playWarn();
+        EcoGame.ui.shakeZone(targetZone);
+        EcoGame.ui.showToast(errMsg);
+      },
       onClosed: (reason) => {
         EcoGame.ui.showToast(reason);
         $("topbar-room-pill").classList.add("hidden");
@@ -66,7 +71,6 @@
       EcoGame.room.createRoom(name, {
         ecosystem: $("create-ecosystem").value,
         variant: $("create-variant").value,
-        roleLock: $("create-role-lock").checked,
       });
     });
 
@@ -85,7 +89,7 @@
       EcoGame.room.startLocal(name, {
         ecosystem: $("local-ecosystem").value,
         variant: $("local-variant").value,
-        roleLock: false,
+        localRole: $("local-role").value,
       });
     });
 
